@@ -10,11 +10,17 @@ export default function LessonNotes({ lessonId }) {
   const [status, setStatus] = useState("");
   const [selectedImage, setSelectedImage] = useState(null);
 
+  const authorizeImages = (value) => value.replace(
+    /src="(\/api\/notes\/images\/[^"]+)"/g,
+    (_, src) => `src="${api.authenticatedAssetUrl(src)}"`
+  );
+  const stripAssetTokens = (value) => value.replace(/(\/api\/notes\/images\/[a-f0-9-]+\.(?:png|jpe?g|webp|gif))\?t=[^"&]*/g, "$1");
+
   useEffect(() => {
     setStatus("Loading…"); setEditing(false); setSelectedImage(null);
     api.getNote(lessonId).then((note) => {
       const value = note?.content_html || "";
-      setHtml(value); setStatus("");
+      setHtml(authorizeImages(value)); setStatus("");
     }).catch((e) => setStatus(e.message));
   }, [lessonId]);
 
@@ -33,7 +39,7 @@ export default function LessonNotes({ lessonId }) {
     try {
       const result = await api.uploadNoteImage(lessonId, file);
       editor.current?.focus();
-      document.execCommand("insertHTML", false, `<img src="${result.url}" data-width="100" style="width:100%;height:auto" alt="Note image"><p><br></p>`);
+      document.execCommand("insertHTML", false, `<img src="${api.authenticatedAssetUrl(result.url)}" data-width="100" style="width:100%;height:auto" alt="Note image"><p><br></p>`);
       setStatus("Image added — save your note");
     } catch (e) { setStatus(e.message); }
   };
@@ -59,8 +65,8 @@ export default function LessonNotes({ lessonId }) {
   const save = async () => {
     setStatus("Saving…");
     try {
-      const result = await api.saveNote(lessonId, editor.current?.innerHTML || "");
-      setHtml(result.content_html || ""); setEditing(false); setSelectedImage(null); setStatus("Saved");
+      const result = await api.saveNote(lessonId, stripAssetTokens(editor.current?.innerHTML || ""));
+      setHtml(authorizeImages(result.content_html || "")); setEditing(false); setSelectedImage(null); setStatus("Saved");
     } catch (e) { setStatus(e.message); }
   };
 

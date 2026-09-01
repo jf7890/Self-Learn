@@ -5,10 +5,12 @@ import { IconPlay, IconPause, IconFullscreen } from "../icons.jsx";
 const SPEEDS = [1, 1.25, 1.5, 2];
 
 function formatTime(sec) {
-  if (!isFinite(sec)) return "0:00";
-  const m = Math.floor(sec / 60);
-  const s = Math.floor(sec % 60).toString().padStart(2, "0");
-  return `${m}:${s}`;
+  if (!isFinite(sec) || sec < 0) return "0:00";
+  const total = Math.floor(sec);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = (total % 60).toString().padStart(2, "0");
+  return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${s}` : `${m}:${s}`;
 }
 
 /**

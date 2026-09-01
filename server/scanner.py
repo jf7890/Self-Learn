@@ -80,6 +80,8 @@ not real deletion.
 
 import os
 import re
+import json
+import subprocess
 from db import get_conn
 
 VIDEO_EXT = {".mp4", ".mkv", ".webm", ".mov", ".avi", ".m4v"}
@@ -442,20 +444,36 @@ def _upsert_section(conn, course_id: int, folder_name: str, title: str, order_in
     ).fetchone()["id"]
 
 
+def _probe_duration(file_path: str):
+    """Read container duration without decoding/transcoding media."""
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", file_path],
+            capture_output=True, text=True, timeout=30, check=True,
+        )
+        value = float(json.loads(result.stdout)["format"]["duration"])
+        return value if value > 0 else None
+    except (OSError, subprocess.SubprocessError, ValueError, KeyError, json.JSONDecodeError):
+        return None
+
 def _insert_lesson(conn, section_id: int, dir_path: str, file_name: str, order_index: int) -> int:
     title = clean_lesson_title(file_name)
     media_type = detect_media_type(file_name)
     file_path = os.path.join(dir_path, file_name)
     size_bytes = os.path.getsize(file_path)
     rel_path = os.path.relpath(file_path, COURSES_ROOT)
+    existing = conn.execute("SELECT duration_seconds FROM lessons WHERE relative_path = ?", (rel_path,)).fetchone()
+    duration = existing["duration_seconds"] if existing and existing["duration_seconds"] else None
+    if duration is None and media_type in {"video", "audio"}:
+        duration = _probe_duration(file_path)
 
     conn.execute(
         "INSERT INTO lessons (section_id, file_name, relative_path, title, "
-        "media_type, size_bytes, order_index) VALUES (?, ?, ?, ?, ?, ?, ?) "
+        "media_type, duration_seconds, size_bytes, order_index) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(relative_path) DO UPDATE SET title = excluded.title, "
-        "media_type = excluded.media_type, size_bytes = excluded.size_bytes, "
-        "order_index = excluded.order_index",
-        (section_id, file_name, rel_path, title, media_type, size_bytes, order_index),
+        "media_type = excluded.media_type, duration_seconds = COALESCE(lessons.duration_seconds, excluded.duration_seconds), "
+        "size_bytes = excluded.size_bytes, order_index = excluded.order_index",
+        (section_id, file_name, rel_path, title, media_type, duration, size_bytes, order_index),
     )
     return conn.execute("SELECT id FROM lessons WHERE relative_path = ?", (rel_path,)).fetchone()["id"]
 

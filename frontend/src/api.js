@@ -80,6 +80,7 @@ export const api = {
     }),
   rescan: () => request("/admin/rescan", { method: "POST" }),
   mediaUrl: (lessonId) => `${BASE}/media/${lessonId}?t=${getToken()}`,
+  authenticatedAssetUrl: (path) => `${path}${path.includes("?") ? "&" : "?"}t=${encodeURIComponent(getToken() || "")}`,
   subtitleUrl: (subtitleId) => `${BASE}/subtitles/${subtitleId}?t=${getToken()}`,
   attachmentUrl: (attachmentId) => `${BASE}/attachments/${attachmentId}?t=${getToken()}`,
 

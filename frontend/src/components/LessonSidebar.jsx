@@ -10,12 +10,13 @@ function TypeIcon({ mediaType, ...props }) {
   }
 }
 
-function formatSize(bytes) {
-  if (!bytes) return "";
-  const kb = bytes / 1024;
-  if (kb < 1000) return `${Math.max(1, Math.round(kb))} KB`;
-  const mb = bytes / 1024 / 1024;
-  return mb >= 1000 ? `${(mb / 1024).toFixed(1)} GB` : `${mb.toFixed(0)} MB`;
+function formatDuration(seconds) {
+  if (!Number.isFinite(seconds) || seconds <= 0) return "--:--";
+  const total = Math.floor(seconds);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = String(total % 60).padStart(2, "0");
+  return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${s}` : `${m}:${s}`;
 }
 
 export default function LessonSidebar({ sections, activeLessonId, onSelect, open, onClose }) {
@@ -82,9 +83,7 @@ export default function LessonSidebar({ sections, activeLessonId, onSelect, open
                               {lesson.completed ? <IconCheck width={13} height={13} /> : <TypeIcon mediaType={lesson.media_type} width={13} height={13} />}
                             </span>
                             <span className="ct-lesson-title">{lesson.title}</span>
-                            {lesson.size_bytes > 0 && (
-                              <span className="ct-lesson-size">{formatSize(lesson.size_bytes)}</span>
-                            )}
+                            <span className="ct-lesson-size">{formatDuration(lesson.duration_seconds)}</span>
                             {inProgress && (
                               <span className="ct-lesson-progress">
                                 <span style={{ width: `${watchFraction * 100}%` }} />
