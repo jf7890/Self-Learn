@@ -3,7 +3,7 @@ import { api } from "./api";
 
 const BrandingContext = createContext(null);
 
-const DEFAULT_BRANDING = { site_name: "uLearn", accent_color: "#e8a33d", logo_url: null, favicon_url: null };
+const DEFAULT_BRANDING = { site_name: "Self Learn", accent_color: "#e8a33d", logo_url: null, favicon_url: "/favicon.png" };
 
 function hexToRgb(hex) {
   const clean = hex.replace("#", "");
@@ -47,7 +47,7 @@ function applyFavicon(faviconUrl) {
     link.setAttribute("data-ulearn-favicon", "1");
     document.head.appendChild(link);
   }
-  link.href = `/api${faviconUrl}`;
+  link.href = faviconUrl.startsWith("/branding/") ? `/api${faviconUrl}` : faviconUrl;
 }
 
 export function BrandingProvider({ children }) {
@@ -57,10 +57,11 @@ export function BrandingProvider({ children }) {
   const refresh = useCallback(() => {
     api.getBranding()
       .then((b) => {
-        setBranding(b);
-        applyAccentColor(b.accent_color);
-        applyFavicon(b.favicon_url);
-        document.title = b.site_name;
+        const effective = { ...b, site_name: b.site_name === "uLearn" ? "Self Learn" : b.site_name, favicon_url: b.favicon_url || "/favicon.png" };
+        setBranding(effective);
+        applyAccentColor(effective.accent_color);
+        applyFavicon(effective.favicon_url);
+        document.title = effective.site_name;
       })
       .catch(() => {})
       .finally(() => setLoaded(true));

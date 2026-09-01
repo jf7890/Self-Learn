@@ -27,7 +27,7 @@ function TopNav() {
   const navigate = useNavigate();
   const location = useLocation();
   const user = JSON.parse(localStorage.getItem("ct_user") || "null");
-  const { site_name, logo_url } = useBranding();
+  const { logo_url } = useBranding();
 
   const logout = () => {
     localStorage.removeItem("ct_token");
@@ -41,9 +41,8 @@ function TopNav() {
         {logo_url ? (
           <img src={`/api${logo_url}`} alt="" className="ct-brand-logo" />
         ) : (
-          <span className="ct-brand-mark"><BrandMark size={15} /></span>
+          <img src="/brand-logo-192.png" alt="Home" className="ct-brand-logo ct-default-brand-logo" />
         )}
-        {site_name}
       </Link>
       <div className="ct-spacer" />
       <Link to="/profile" className={`btn btn-secondary btn-sm ${location.pathname === "/profile" ? "ct-nav-active" : ""}`}>
@@ -81,7 +80,8 @@ function TopNav() {
           color: var(--text);
         }
         .ct-brand-mark { color: var(--accent); display: inline-flex; }
-        .ct-brand-logo { height: 22px; width: auto; max-width: 140px; object-fit: contain; }
+        .ct-brand-logo { height: 32px; width: auto; max-width: 140px; object-fit: contain; }
+        .ct-default-brand-logo { width: 32px; border-radius: 7px; object-fit: cover; }
         .ct-spacer { flex: 1; }
         .ct-nav-user { font-size: var(--text-sm); color: var(--text-muted); }
         .ct-nav-active { border-color: var(--accent-dim); color: var(--accent); }

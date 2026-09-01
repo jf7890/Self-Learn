@@ -230,10 +230,6 @@ export function IconSearch(props) {
  * identically everywhere (nav, auth screens, section headers, thumbnails)
  * instead of five near-identical CSS clip-paths drifting apart over time.
  */
-export function BrandMark({ size = 16, color = "currentColor", ...props }) {
-  return (
-    <svg width={size} height={size * 0.74} viewBox="0 0 24 18" fill={color} {...props}>
-      <polygon points="0,0 24,0 24,10.5 12,18 0,10.5" />
-    </svg>
-  );
+export function BrandMark({ size = 16, color: _color, ...props }) {
+  return <img src="/brand-logo-192.png" width={size} height={size} alt="" style={{ objectFit: "cover", borderRadius: "18%" }} {...props} />;
 }

@@ -144,7 +144,7 @@ DEFAULT_SETTINGS = {
     "telegram_chat_id": "",
     "template_course_completed": "🎉 {username} just completed \"{course_title}\"!",
     "template_course_added": "📚 New course added to the library: \"{course_title}\" ({lesson_count} lessons)",
-    "site_name": "uLearn",
+    "site_name": "Self Learn",
     "accent_color": "#e8a33d",
     "logo_ext": "",
     "favicon_ext": "",
