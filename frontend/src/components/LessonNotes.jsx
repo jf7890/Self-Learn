@@ -49,8 +49,14 @@ const Indent = Extension.create({
   },
   addKeyboardShortcuts() {
     return {
-      Tab: () => this.editor.isActive("table") ? false : (this.editor.commands.indent() || true),
-      "Shift-Tab": () => this.editor.isActive("table") ? false : (this.editor.commands.outdent() || true),
+      Tab: () => this.editor.commands.indent() || true,
+      "Shift-Tab": () => this.editor.commands.outdent() || true,
+      Backspace: () => {
+        const { $from, empty } = this.editor.state.selection;
+        const atStart = empty && $from.parentOffset === 0;
+        const indent = $from.parent?.attrs?.indent || 0;
+        return atStart && indent > 0 ? this.editor.commands.outdent() : false;
+      },
     };
   },
 });
@@ -110,20 +116,17 @@ export default function LessonNotes({ lessonId }) {
     win.document.write(`<!doctype html><html><head><title>Lesson note</title><style>@page{margin:18mm}body{font:15px/1.6 Arial;color:#111}h1{font-size:28px}h2{font-size:23px}h3{font-size:19px}img{max-width:100%;max-height:700px;object-fit:contain}table{border-collapse:collapse;width:100%}td,th{border:1px solid #777;padding:6px}blockquote{border-left:3px solid #555;padding-left:12px;color:#444}</style></head><body><h1>Lesson notes</h1>${editor.getHTML()}</body></html>`);
     win.document.close(); win.focus(); setTimeout(() => win.print(), 350);
   };
-  const addTable = () => { const rows = Math.max(1, Math.min(10, Number(prompt("Rows (1-10)", "3")) || 0)), cols = Math.max(1, Math.min(10, Number(prompt("Columns (1-10)", "3")) || 0)); if (rows && cols) editor.chain().focus().insertTable({ rows, cols, withHeaderRow: true }).run(); };
   if (!editor) return null;
   const imageSelected = editor.isActive("image");
 
   return <section className="lesson-notes card">
-    <div className="notes-head"><div><h3>My notes</h3><p>Private study notes. Tab/Shift+Tab changes indentation; paste screenshots directly.</p></div><div className="head-actions">{!editing && <button className="btn btn-secondary btn-sm" onClick={() => setEditing(true)}>Edit note</button>}<button className="btn btn-secondary btn-sm" onClick={exportPdf}>Export PDF</button></div></div>
+    <div className="notes-head"><div><h3>My notes</h3><p>Private study notes — or use them to create a document.</p></div><div className="head-actions">{!editing && <button className="btn btn-secondary btn-sm" onClick={() => setEditing(true)}>Edit note</button>}<button className="btn btn-secondary btn-sm" onClick={exportPdf}>Export PDF</button></div></div>
     {editing && <div className="notes-toolbar">
       <select aria-label="Text style" onChange={e => { const v=e.target.value; v.startsWith("h") ? editor.chain().focus().setHeading({level:Number(v[1])}).run() : editor.chain().focus().setParagraph().run(); }}><option value="p">Paragraph</option><option value="h1">Heading 1</option><option value="h2">Heading 2</option><option value="h3">Heading 3</option></select>
       <select aria-label="Font size" onChange={e => e.target.value ? editor.chain().focus().setFontSize(e.target.value).run() : editor.chain().focus().unsetFontSize().run()}><option value="">Font size</option><option value="12">Small</option><option value="15">Normal</option><option value="18">Large</option><option value="24">Extra large</option></select>
       <button className={editor.isActive("bold")?"active":""} onClick={() => editor.chain().focus().toggleBold().run()}><b>B</b></button><button onClick={() => editor.chain().focus().toggleItalic().run()}><i>I</i></button><button onClick={() => editor.chain().focus().toggleUnderline().run()}><u>U</u></button>
-      <button onClick={() => editor.chain().focus().toggleBulletList().run()}>• List</button><button onClick={() => editor.chain().focus().toggleOrderedList().run()}>1. List</button><button onClick={() => editor.chain().focus().indent().run()}>Indent</button><button onClick={() => editor.chain().focus().outdent().run()}>Outdent</button>
-      {[["left","Left"],["center","Center"],["right","Right"],["justify","Justify"]].map(([a,l])=><button key={a} onClick={() => editor.chain().focus().setTextAlign(a).run()}>{l}</button>)}
-      <button onClick={addTable}>Table</button>{editor.isActive("table") && <><button onClick={() => editor.chain().focus().addRowAfter().run()}>+ Row</button><button onClick={() => editor.chain().focus().addColumnAfter().run()}>+ Col</button><button onClick={() => editor.chain().focus().deleteRow().run()}>− Row</button><button onClick={() => editor.chain().focus().deleteColumn().run()}>− Col</button><button onClick={() => editor.chain().focus().deleteTable().run()}>Delete table</button></>}
-      <label className="notes-upload">Image<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={e => uploadImage(e.target.files?.[0])}/></label>
+      <button onClick={() => editor.chain().focus().toggleBulletList().run()}>• List</button><button onClick={() => editor.chain().focus().toggleOrderedList().run()}>1. List</button>
+      <select aria-label="Text alignment" defaultValue="left" onChange={e => editor.chain().focus().setTextAlign(e.target.value).run()}><option value="left">Align left</option><option value="center">Align center</option><option value="right">Align right</option></select>
       {imageSelected && <span className="image-tools">Image: {[25,50,75,100].map(w=><button key={w} onClick={() => editor.chain().focus().updateAttributes("image",{width:w}).run()}>{w}%</button>)}{["left","center","right"].map(a=><button key={a} onClick={() => editor.chain().focus().updateAttributes("image",{align:a}).run()}>{a}</button>)}</span>}
     </div>}
     <EditorContent editor={editor} className={!editing && !savedHtml ? "notes-empty" : ""}/>
