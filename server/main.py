@@ -18,6 +18,10 @@ import sqlite3
 import zipfile
 import tempfile
 import io
+import uuid
+import imghdr
+from html.parser import HTMLParser
+from html import escape
 from datetime import date, timedelta, datetime
 from fastapi import FastAPI, Depends, HTTPException, Request, UploadFile, File
 from fastapi.responses import StreamingResponse, FileResponse, Response
@@ -50,6 +54,40 @@ ALLOWED_FAVICON_TYPES = {
     "image/x-icon": "ico", "image/vnd.microsoft.icon": "ico",
 }
 MAX_LOGO_BYTES = 2 * 1024 * 1024  # 2MB
+DATA_DIR = os.path.dirname(os.environ.get("ULEARN_DB", "/data/ulearn.db"))
+NOTE_IMAGES_DIR = os.path.join(DATA_DIR, "note-images")
+MAX_NOTE_IMAGE_BYTES = 8 * 1024 * 1024
+
+class _NoteSanitizer(HTMLParser):
+    """Small allow-list sanitizer for contenteditable notes."""
+    allowed = {"p", "div", "br", "strong", "b", "em", "i", "u", "s", "ul", "ol", "li", "blockquote", "pre", "code", "h1", "h2", "h3", "a", "img"}
+    void = {"br", "img"}
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.out = []
+    def handle_starttag(self, tag, attrs):
+        if tag not in self.allowed: return
+        clean = []
+        attrs = dict(attrs)
+        if tag == "a" and attrs.get("href", "").startswith(("http://", "https://")):
+            clean = [("href", attrs["href"]), ("target", "_blank"), ("rel", "noopener noreferrer")]
+        elif tag == "img":
+            src = attrs.get("src", "")
+            if re.fullmatch(r"/api/notes/images/[a-f0-9-]+\.(?:png|jpe?g|webp|gif)", src):
+                width = attrs.get("data-width", "100")
+                if width not in {"25", "50", "75", "100"}: width = "100"
+                clean = [("src", src), ("data-width", width), ("style", f"width:{width}%;height:auto")]
+            else: return
+        self.out.append("<" + tag + "".join(f' {k}="{escape(v, quote=True)}"' for k,v in clean) + ">")
+    def handle_endtag(self, tag):
+        if tag in self.allowed and tag not in self.void: self.out.append(f"</{tag}>")
+    def handle_data(self, data): self.out.append(escape(data))
+
+def sanitize_note_html(value: str) -> str:
+    if len(value.encode("utf-8")) > 250_000:
+        raise HTTPException(status_code=400, detail="Note is too large")
+    parser = _NoteSanitizer(); parser.feed(value); parser.close()
+    return "".join(parser.out)
 
 
 def _asset_path(kind: str, ext: str) -> str:
@@ -481,6 +519,62 @@ def get_course(course_id: int, current=Depends(get_current_user)):
         result["attachments"] = [row_to_dict(a) for a in course_attachments]
         return result
 
+
+# ---------------------------------------------------------------------------
+# Private study notes
+# ---------------------------------------------------------------------------
+
+class NoteUpdate(BaseModel):
+    content_html: str = ""
+
+@app.get("/lessons/{lesson_id}/note")
+def get_lesson_note(lesson_id: int, current=Depends(get_current_user)):
+    user_id = int(current["sub"])
+    with get_conn() as conn:
+        if not conn.execute("SELECT 1 FROM lessons WHERE id = ?", (lesson_id,)).fetchone():
+            raise HTTPException(status_code=404, detail="Lesson not found")
+        row = conn.execute("SELECT content_html, updated_at FROM lesson_notes WHERE user_id = ? AND lesson_id = ?", (user_id, lesson_id)).fetchone()
+    return row_to_dict(row) if row else {"content_html": "", "updated_at": None}
+
+@app.put("/lessons/{lesson_id}/note")
+def save_lesson_note(lesson_id: int, body: NoteUpdate, current=Depends(get_current_user)):
+    user_id = int(current["sub"])
+    clean = sanitize_note_html(body.content_html)
+    with get_conn() as conn:
+        if not conn.execute("SELECT 1 FROM lessons WHERE id = ?", (lesson_id,)).fetchone():
+            raise HTTPException(status_code=404, detail="Lesson not found")
+        conn.execute("INSERT INTO lesson_notes(user_id, lesson_id, content_html, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(user_id, lesson_id) DO UPDATE SET content_html=excluded.content_html, updated_at=CURRENT_TIMESTAMP", (user_id, lesson_id, clean))
+        row = conn.execute("SELECT content_html, updated_at FROM lesson_notes WHERE user_id = ? AND lesson_id = ?", (user_id, lesson_id)).fetchone()
+    return row_to_dict(row)
+
+@app.post("/lessons/{lesson_id}/note-images")
+async def upload_note_image(lesson_id: int, file: UploadFile = File(...), current=Depends(get_current_user)):
+    user_id = int(current["sub"])
+    with get_conn() as conn:
+        if not conn.execute("SELECT 1 FROM lessons WHERE id = ?", (lesson_id,)).fetchone():
+            raise HTTPException(status_code=404, detail="Lesson not found")
+    data = await file.read(MAX_NOTE_IMAGE_BYTES + 1)
+    if not data or len(data) > MAX_NOTE_IMAGE_BYTES:
+        raise HTTPException(status_code=400, detail="Image must be between 1 byte and 8 MB")
+    detected = imghdr.what(None, data)
+    ext = {"jpeg": "jpg", "png": "png", "webp": "webp", "gif": "gif"}.get(detected)
+    if not ext:
+        raise HTTPException(status_code=400, detail="Only PNG, JPEG, WebP and GIF images are allowed")
+    user_dir = os.path.join(NOTE_IMAGES_DIR, str(user_id))
+    os.makedirs(user_dir, exist_ok=True)
+    name = f"{uuid.uuid4()}.{ext}"
+    with open(os.path.join(user_dir, name), "wb") as out:
+        out.write(data)
+    return {"url": f"/api/notes/images/{name}"}
+
+@app.get("/notes/images/{name}")
+def serve_note_image(name: str, current=Depends(get_current_user)):
+    if not re.fullmatch(r"[a-f0-9-]+\.(?:png|jpe?g|webp|gif)", name):
+        raise HTTPException(status_code=404, detail="Image not found")
+    path = os.path.join(NOTE_IMAGES_DIR, str(int(current["sub"])), name)
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="Image not found")
+    return FileResponse(path)
 
 # ---------------------------------------------------------------------------
 # Media streaming (range-request aware — required for video seek to work)

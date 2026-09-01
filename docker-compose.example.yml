@@ -1,29 +1,20 @@
-version: "3.8"
-
 services:
-  ulearn-api:
+  api:
     build: ./server
-    container_name: ulearn-api
     restart: unless-stopped
     environment:
-      - SECRET_KEY=${SECRET_KEY:?set a random 32+ char string in .env}
-      - ULEARN_DB=/data/ulearn.db
-      - COURSES_ROOT=/app/courses
-      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:4173}
+      SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in .env}
+      ULEARN_DB: /data/ulearn.db
+      COURSES_ROOT: /app/courses
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:4173}
     volumes:
       - ./data:/data
-      # ./courses can point anywhere with course files, including a NAS
-      # share or other network mount — see README for platform-specific
-      # notes on mounting network storage.
       - ./courses:/app/courses:ro
     ports:
-      - "8000:8000"
-
-  ulearn-web:
+      - "0.0.0.0:${API_PORT:-8000}:8000"
+  web:
     build: ./frontend
-    container_name: ulearn-web
     restart: unless-stopped
-    depends_on:
-      - ulearn-api
+    depends_on: [api]
     ports:
-      - "4173:4173"
+      - "0.0.0.0:${WEB_PORT:-4173}:4173"

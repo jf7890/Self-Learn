@@ -288,3 +288,31 @@ exist yet.
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+## Self-learn MVP quick start
+
+The host course library is `./courses`; each direct child is one course. The current library is
+`courses/Microsoft-Admin` with numbered MP4 lessons. Private notes and pasted images are stored
+under `./data`, not beside the videos.
+
+### Run directly on a VM/LXC
+
+```bash
+cp .env.example .env
+# Set a random SECRET_KEY in .env (for example: openssl rand -hex 32)
+./run-local.sh
+```
+
+Open `http://SERVER_IP:4173`. The API listens on `0.0.0.0:8000`; Vite proxies `/api` to it.
+The first visitor creates the admin account and the library is scanned automatically.
+
+### Docker Compose
+
+```bash
+cp .env.example .env
+# Set SECRET_KEY and set CORS_ORIGINS=http://SERVER_IP:4173
+docker compose up -d --build
+```
+
+`./courses` is mounted read-only and `./data` persists SQLite, note images, and branding. You never
+need to copy or upload videos inside a container. Use Admin → Library → Rescan after adding files.

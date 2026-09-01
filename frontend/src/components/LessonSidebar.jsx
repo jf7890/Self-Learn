@@ -114,7 +114,7 @@ export default function LessonSidebar({ sections, activeLessonId, onSelect, open
           width: 328px;
           flex-shrink: 0;
           background: var(--surface);
-          border-left: 1px solid var(--border);
+          border-right: 1px solid var(--border);
           overflow-y: auto;
           max-height: calc(100dvh - 56px);
         }
@@ -230,7 +230,7 @@ export default function LessonSidebar({ sections, activeLessonId, onSelect, open
             left: 0; right: 0; bottom: 0;
             width: 100%;
             max-height: 72dvh;
-            border-left: none;
+            border-right: none;
             border-top: 1px solid var(--border);
             border-radius: var(--radius-lg) var(--radius-lg) 0 0;
             transform: translateY(100%);

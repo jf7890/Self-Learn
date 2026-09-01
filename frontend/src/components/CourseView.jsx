@@ -5,7 +5,7 @@ import VideoPlayer from "./VideoPlayer.jsx";
 import DocViewer from "./DocViewer.jsx";
 import LessonSidebar from "./LessonSidebar.jsx";
 import Certificate from "./Certificate.jsx";
-import CommentSection from "./CommentSection.jsx";
+import LessonNotes from "./LessonNotes.jsx";
 import { IconChevronLeft, IconTrophy, IconInbox, IconChevronDown, IconLibrary } from "../icons.jsx";
 
 export default function CourseView() {
@@ -79,6 +79,17 @@ export default function CourseView() {
 
   return (
     <div className="ct-course-view">
+      <LessonSidebar
+        sections={course.sections}
+        activeLessonId={activeLesson.id}
+        onSelect={(lesson) => {
+          setActiveLesson(lesson);
+          setSheetOpen(false);
+        }}
+        open={sheetOpen}
+        onClose={() => setSheetOpen(false)}
+      />
+
       <div className="ct-player-column">
         <div className="ct-player-topbar">
           <Link to="/" className="ct-back"><IconChevronLeft width={15} height={15} /> Courses</Link>
@@ -128,19 +139,8 @@ export default function CourseView() {
           </div>
         )}
 
-        <CommentSection lessonId={activeLesson.id} />
+        <LessonNotes lessonId={activeLesson.id} />
       </div>
-
-      <LessonSidebar
-        sections={course.sections}
-        activeLessonId={activeLesson.id}
-        onSelect={(lesson) => {
-          setActiveLesson(lesson);
-          setSheetOpen(false);
-        }}
-        open={sheetOpen}
-        onClose={() => setSheetOpen(false)}
-      />
 
       {showCertificate && (
         <Certificate
@@ -163,6 +163,8 @@ export default function CourseView() {
           padding: var(--space-4) var(--space-5);
           gap: var(--space-3);
           overflow-y: auto;
+          max-width: 1500px;
+          margin: 0 auto;
         }
         .ct-player-topbar {
           display: flex;

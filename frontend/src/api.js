@@ -61,6 +61,13 @@ export const api = {
   getCourse: (id) => request(`/courses/${id}`),
   getContinueWatching: () => request("/continue-watching"),
   getMyStats: () => request("/me/stats"),
+  getNote: (lessonId) => request(`/lessons/${lessonId}/note`),
+  saveNote: (lessonId, contentHtml) => request(`/lessons/${lessonId}/note`, { method: "PUT", body: JSON.stringify({ content_html: contentHtml }) }),
+  uploadNoteImage: (lessonId, file) => {
+    const form = new FormData();
+    form.append("file", file);
+    return uploadRequest(`/lessons/${lessonId}/note-images`, form);
+  },
   getComments: (lessonId) => request(`/lessons/${lessonId}/comments`),
   postComment: (lessonId, body) => request(`/lessons/${lessonId}/comments`, { method: "POST", body: JSON.stringify({ body }) }),
   deleteComment: (commentId) => request(`/comments/${commentId}`, { method: "DELETE" }),
