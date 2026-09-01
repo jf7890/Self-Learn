@@ -76,9 +76,11 @@ class _NoteSanitizer(HTMLParser):
             if re.fullmatch(r"/api/notes/images/[a-f0-9-]+\.(?:png|jpe?g|webp|gif)", src):
                 width = attrs.get("data-width", "100")
                 align = attrs.get("data-align", "left")
+                caption = attrs.get("data-caption", "").strip()[:500]
                 if width not in {"25", "50", "75", "100"}: width = "100"
                 if align not in {"left", "center", "right"}: align = "left"
                 clean = [("src", src), ("data-width", width), ("data-align", align)]
+                if caption: clean.append(("data-caption", caption))
             else: return
         elif tag in {"p", "h1", "h2", "h3"}:
             align = attrs.get("style", "")

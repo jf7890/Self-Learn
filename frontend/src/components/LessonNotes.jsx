@@ -64,13 +64,16 @@ const Indent = Extension.create({
 function ImageView({ node, updateAttributes, selected }) {
   const width = node.attrs.width || 100, align = node.attrs.align || "left";
   return <NodeViewWrapper className={`note-image-wrap align-${align} ${selected ? "selected" : ""}`}>
-    <img src={node.attrs.src} alt={node.attrs.alt || "Note image"} style={{ width: `${width}%` }} />
+    <figure style={{ width: `${width}%` }}>
+      <img src={node.attrs.src} alt={node.attrs.alt || "Note image"} />
+      {node.attrs.caption && <figcaption>{node.attrs.caption}</figcaption>}
+    </figure>
   </NodeViewWrapper>;
 }
 
 const StudyImage = Image.extend({
   addAttributes() {
-    return { ...this.parent?.(), width: { default: 100, parseHTML: el => Number(el.dataset.width || 100), renderHTML: a => ({ "data-width": a.width }) }, align: { default: "left", parseHTML: el => el.dataset.align || "left", renderHTML: a => ({ "data-align": a.align }) } };
+    return { ...this.parent?.(), width: { default: 100, parseHTML: el => Number(el.dataset.width || 100), renderHTML: a => ({ "data-width": a.width }) }, align: { default: "left", parseHTML: el => el.dataset.align || "left", renderHTML: a => ({ "data-align": a.align }) }, caption: { default: "", parseHTML: el => el.dataset.caption || "", renderHTML: a => a.caption ? ({ "data-caption": a.caption }) : {} } };
   },
   addNodeView() { return ReactNodeViewRenderer(ImageView); },
 });
@@ -118,6 +121,15 @@ export default function LessonNotes({ lessonId }) {
   };
   if (!editor) return null;
   const imageSelected = editor.isActive("image");
+  const applyAlignment = align => imageSelected
+    ? editor.chain().focus().updateAttributes("image", { align }).run()
+    : editor.chain().focus().setTextAlign(align).run();
+  const addImageCaption = () => {
+    if (!imageSelected) return;
+    const current = editor.getAttributes("image").caption || "";
+    const caption = prompt("Image caption", current || "Figure 1 — ");
+    if (caption !== null) editor.chain().focus().updateAttributes("image", { caption: caption.trim() }).run();
+  };
 
   return <section className="lesson-notes card">
     <div className="notes-head"><div><h3>My notes</h3><p>Private study notes — or use them to create a document.</p></div><div className="head-actions">{!editing && <button className="btn btn-secondary btn-sm" onClick={() => setEditing(true)}>Edit note</button>}<button className="btn btn-secondary btn-sm" onClick={exportPdf}>Export PDF</button></div></div>
@@ -125,15 +137,16 @@ export default function LessonNotes({ lessonId }) {
       <select aria-label="Text style" onChange={e => { const v=e.target.value; v.startsWith("h") ? editor.chain().focus().setHeading({level:Number(v[1])}).run() : editor.chain().focus().setParagraph().run(); }}><option value="p">Paragraph</option><option value="h1">Heading 1</option><option value="h2">Heading 2</option><option value="h3">Heading 3</option></select>
       <select aria-label="Font size" onChange={e => e.target.value ? editor.chain().focus().setFontSize(e.target.value).run() : editor.chain().focus().unsetFontSize().run()}><option value="">Font size</option><option value="12">Small</option><option value="15">Normal</option><option value="18">Large</option><option value="24">Extra large</option></select>
       <button className={editor.isActive("bold")?"active":""} onClick={() => editor.chain().focus().toggleBold().run()}><b>B</b></button><button onClick={() => editor.chain().focus().toggleItalic().run()}><i>I</i></button><button onClick={() => editor.chain().focus().toggleUnderline().run()}><u>U</u></button>
-      <button onClick={() => editor.chain().focus().toggleBulletList().run()}>• List</button><button onClick={() => editor.chain().focus().toggleOrderedList().run()}>1. List</button>
-      <select aria-label="Text alignment" defaultValue="left" onChange={e => editor.chain().focus().setTextAlign(e.target.value).run()}><option value="left">Align left</option><option value="center">Align center</option><option value="right">Align right</option></select>
-      {imageSelected && <span className="image-tools">Image: {[25,50,75,100].map(w=><button key={w} onClick={() => editor.chain().focus().updateAttributes("image",{width:w}).run()}>{w}%</button>)}{["left","center","right"].map(a=><button key={a} onClick={() => editor.chain().focus().updateAttributes("image",{align:a}).run()}>{a}</button>)}</span>}
+      <select aria-label="List style" defaultValue="none" onChange={e => { const v=e.target.value; if(v==="bullet") editor.chain().focus().toggleBulletList().run(); if(v==="numbered") editor.chain().focus().toggleOrderedList().run(); e.target.value="none"; }}><option value="none">List</option><option value="bullet">Bullet list</option><option value="numbered">Numbered list</option></select>
+      <button className={editor.isActive("blockquote")?"active":""} onClick={() => editor.chain().focus().toggleBlockquote().run()}>Quote</button>
+      <select aria-label="Alignment" value={imageSelected ? (editor.getAttributes("image").align || "left") : (editor.isActive({textAlign:"center"})?"center":editor.isActive({textAlign:"right"})?"right":"left")} onChange={e => applyAlignment(e.target.value)}><option value="left">Align left</option><option value="center">Align center</option><option value="right">Align right</option></select>
+      {imageSelected && <span className="image-tools"><select aria-label="Image size" value={editor.getAttributes("image").width || 100} onChange={e => editor.chain().focus().updateAttributes("image",{width:Number(e.target.value)}).run()}><option value="25">Image 25%</option><option value="50">Image 50%</option><option value="75">Image 75%</option><option value="100">Image 100%</option></select><button onClick={addImageCaption}>Add caption</button></span>}
     </div>}
     <EditorContent editor={editor} className={!editing && !savedHtml ? "notes-empty" : ""}/>
     {!editing && !savedHtml && <p className="empty-message">No notes yet. Pause the video and add key points or screenshots here.</p>}
     {editing && <div className="notes-actions"><span>{status}</span><button className="btn btn-ghost" onClick={cancel}>Cancel</button><button className="btn btn-primary" onClick={save}>Save note</button></div>}{!editing && status && <small>{status}</small>}
     <style>{`
-      .lesson-notes{padding:20px;margin-top:8px}.notes-head{display:flex;justify-content:space-between;gap:16px}.notes-head h3{margin:0 0 5px}.notes-head p,.empty-message{margin:0;color:var(--text-muted);font-size:13px}.head-actions{display:flex;gap:8px;flex-shrink:0}.notes-toolbar{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:18px 0 8px}.notes-toolbar button,.notes-toolbar select,.notes-upload{background:var(--surface-raised);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 9px;font-size:12px;cursor:pointer}.notes-toolbar button.active{border-color:var(--accent);color:var(--accent)}.notes-upload input{display:none}.image-tools{display:flex;gap:4px;align-items:center;flex-wrap:wrap}.notes-editor{min-height:220px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:16px;line-height:1.65;outline:none}.notes-editor:focus{border-color:var(--accent)}.notes-empty .notes-editor{display:none}.empty-message{margin-top:16px;font-style:italic}.notes-editor img{max-width:100%;max-height:min(520px,65vh);height:auto;object-fit:contain;border-radius:6px}.note-image-wrap{display:flex;margin:12px 0}.note-image-wrap.align-left{justify-content:flex-start}.note-image-wrap.align-center{justify-content:center}.note-image-wrap.align-right{justify-content:flex-end}.note-image-wrap.selected img{outline:3px solid var(--accent)}.notes-editor table{border-collapse:collapse;width:100%;margin:12px 0}.notes-editor td,.notes-editor th{border:1px solid var(--border-strong);padding:7px;min-width:60px}.notes-editor th{background:var(--surface-raised)}.notes-editor blockquote{border-left:3px solid var(--accent);padding-left:12px}.notes-actions{display:flex;justify-content:flex-end;align-items:center;gap:8px;margin-top:10px}.notes-actions span{margin-right:auto;color:var(--text-muted);font-size:12px}@media(max-width:640px){.lesson-notes{padding:14px}.notes-head{flex-direction:column}.head-actions{align-self:flex-end}}
+      .lesson-notes{padding:20px;margin-top:8px}.notes-head{display:flex;justify-content:space-between;gap:16px}.notes-head h3{margin:0 0 5px}.notes-head p,.empty-message{margin:0;color:var(--text-muted);font-size:13px}.head-actions{display:flex;gap:8px;flex-shrink:0}.notes-toolbar{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:18px 0 8px}.notes-toolbar button,.notes-toolbar select,.notes-upload{background:var(--surface-raised);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 9px;font-size:12px;cursor:pointer}.notes-toolbar button.active{border-color:var(--accent);color:var(--accent)}.notes-upload input{display:none}.image-tools{display:flex;gap:4px;align-items:center;flex-wrap:wrap}.notes-editor{min-height:220px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:16px;line-height:1.65;outline:none}.notes-editor:focus{border-color:var(--accent)}.notes-empty .notes-editor{display:none}.empty-message{margin-top:16px;font-style:italic}.notes-editor img{width:100%;max-width:100%;max-height:min(520px,65vh);height:auto;object-fit:contain;border-radius:6px}.note-image-wrap{display:flex;margin:12px 0}.note-image-wrap figure{margin:0}.note-image-wrap figcaption{text-align:center;color:var(--text-muted);font-size:12px;font-style:italic;margin-top:6px}.note-image-wrap.align-left{justify-content:flex-start}.note-image-wrap.align-center{justify-content:center}.note-image-wrap.align-right{justify-content:flex-end}.note-image-wrap.selected img{outline:3px solid var(--accent)}.notes-editor table{border-collapse:collapse;width:100%;margin:12px 0}.notes-editor td,.notes-editor th{border:1px solid var(--border-strong);padding:7px;min-width:60px}.notes-editor th{background:var(--surface-raised)}.notes-editor blockquote{border-left:3px solid var(--accent);padding-left:12px}.notes-actions{display:flex;justify-content:flex-end;align-items:center;gap:8px;margin-top:10px}.notes-actions span{margin-right:auto;color:var(--text-muted);font-size:12px}@media(max-width:640px){.lesson-notes{padding:14px}.notes-head{flex-direction:column}.head-actions{align-self:flex-end}}
     `}</style>
   </section>;
 }
