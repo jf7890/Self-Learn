@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../api";
-import { IconTrophy, IconCheckCircle, IconLibrary } from "../icons.jsx";
+import { IconTrophy, IconCheckCircle, IconLibrary, IconChevronLeft } from "../icons.jsx";
 
 function formatWatchTime(totalSeconds) {
   const hours = Math.floor(totalSeconds / 3600);
@@ -27,6 +28,7 @@ export default function Profile() {
 
   return (
     <div className="ct-profile">
+      <Link to="/" className="ct-profile-back"><IconChevronLeft width={16} height={16} /> Back to your courses</Link>
       <h2 className="ct-profile-heading">{user?.username}</h2>
       {memberSince && <p className="ct-profile-sub">Member since {memberSince}</p>}
 
@@ -54,6 +56,8 @@ export default function Profile() {
 
       <style>{`
         .ct-profile { max-width: 640px; margin: 0 auto; padding: var(--space-6) var(--space-5); }
+        .ct-profile-back { display:inline-flex;align-items:center;gap:3px;color:var(--text-muted);text-decoration:none;font-size:var(--text-sm);margin-bottom:var(--space-5); }
+        .ct-profile-back:hover { color:var(--accent); }
         .ct-profile-heading { font-size: var(--text-xl); }
         .ct-profile-sub { color: var(--text-muted); font-size: var(--text-sm); margin: 4px 0 var(--space-6); }
         .ct-stat-grid {
