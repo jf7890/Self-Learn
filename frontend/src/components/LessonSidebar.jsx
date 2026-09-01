@@ -231,10 +231,11 @@ export default function LessonSidebar({ sections, activeLessonId, onSelect, open
             position: fixed;
             left: 0; right: 0; bottom: 0;
             width: 100%;
-            max-height: 72dvh;
+            height: 100dvh;
+            max-height: 100dvh;
             border-right: none;
-            border-top: 1px solid var(--border);
-            border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+            border-top: none;
+            border-radius: 0;
             transform: translateY(100%);
             transition: transform var(--dur) var(--ease);
             z-index: 40;
