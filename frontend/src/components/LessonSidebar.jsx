@@ -115,7 +115,10 @@ export default function LessonSidebar({ sections, activeLessonId, onSelect, open
           background: var(--surface);
           border-right: 1px solid var(--border);
           overflow-y: auto;
-          max-height: calc(100dvh - 56px);
+          height: 100dvh;
+          max-height: 100dvh;
+          position: sticky;
+          top: 0;
         }
         .ct-sidebar-handle { display: none; }
         .ct-sidebar-search {

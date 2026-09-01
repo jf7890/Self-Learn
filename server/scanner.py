@@ -106,6 +106,7 @@ NUM_PREFIX_RE = re.compile(r"^(\d+)[\s\-._]+(.+)$")
 # extension, e.g. "3. Introduction.en_US" (from "3. Introduction.en_US.srt")
 # — this strips that suffix to get the stem to match against a video by.
 SUBTITLE_LANG_SUFFIX_RE = re.compile(r"^(.+?)\.([a-zA-Z]{2,3}(?:[_-][A-Za-z]{2,4})?)$")
+LESSON_AD_SUFFIX_RE = re.compile(r"\s*\(\s*khoahocgiahoi\.com\s+zalo\s+0583953426\s*\)\s*$", re.IGNORECASE)
 
 COURSES_ROOT = os.environ.get("COURSES_ROOT", "/app/courses")
 
@@ -150,8 +151,9 @@ def parse_numeric_prefix(name: str):
 
 def clean_lesson_title(file_name: str) -> str:
     stem = os.path.splitext(file_name)[0]
-    match = NUM_PREFIX_RE.match(stem)
-    return match.group(2) if match else stem
+    # Keep the lesson numbering ("Buổi 01", etc.) but remove the reseller
+    # advertisement suffix from the display title. The file on disk is untouched.
+    return LESSON_AD_SUFFIX_RE.sub("", stem).strip()
 
 
 def clean_course_title(folder_name: str) -> str:

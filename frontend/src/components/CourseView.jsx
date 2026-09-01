@@ -153,7 +153,8 @@ export default function CourseView() {
       <style>{`
         .ct-course-view {
           display: flex;
-          height: 100dvh;
+          min-height: 100dvh;
+          align-items: flex-start;
         }
         .ct-player-column {
           flex: 1;
@@ -162,7 +163,7 @@ export default function CourseView() {
           flex-direction: column;
           padding: var(--space-4) var(--space-5);
           gap: var(--space-3);
-          overflow-y: auto;
+          overflow: visible;
           max-width: 1500px;
           margin: 0 auto;
         }
@@ -214,7 +215,7 @@ export default function CourseView() {
         .ct-cert-btn { margin-left: auto; }
 
         @media (max-width: 900px) {
-          .ct-course-view { flex-direction: column; height: auto; min-height: 100dvh; }
+          .ct-course-view { flex-direction: column; min-height: 100dvh; }
           .ct-lessons-toggle { display: inline-flex; }
           .ct-player-column { padding: var(--space-3); }
         }
