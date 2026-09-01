@@ -66,11 +66,8 @@ export default function AdminDashboard() {
           gap: var(--space-1);
           border-bottom: 1px solid var(--border);
           margin-bottom: var(--space-5);
-          overflow-x: auto;
-          overflow-y: hidden;
-          -webkit-overflow-scrolling: touch;
-          scrollbar-width: none;
-          scroll-snap-type: x proximity;
+          flex-wrap: wrap;
+          overflow: visible;
         }
         .ct-admin-tabs::-webkit-scrollbar { display: none; }
         .ct-admin-tabs button {
@@ -81,7 +78,7 @@ export default function AdminDashboard() {
           border: none;
           color: var(--text-muted);
           padding: var(--space-3) var(--space-2);
-          margin-right: var(--space-4);
+          margin-right: var(--space-2);
           font-size: var(--text-sm);
           font-weight: 500;
           border-bottom: 2px solid transparent;
@@ -98,9 +95,7 @@ export default function AdminDashboard() {
           .ct-admin-topbar { padding: 0 var(--space-4); }
           .ct-admin-tabs {
             padding: 0 var(--space-4);
-            /* fade hint that there's more to scroll, without hard-clipping content */
-            mask-image: linear-gradient(to right, black calc(100% - 24px), transparent 100%);
-            -webkit-mask-image: linear-gradient(to right, black calc(100% - 24px), transparent 100%);
+            gap: 0 var(--space-2);
           }
           .ct-admin-tabs button { margin-right: var(--space-3); padding: var(--space-3) var(--space-1); }
           .ct-panel, .ct-table-card { margin: 0 var(--space-4); }

@@ -52,10 +52,22 @@ export default function CourseGrid() {
   const [filter, setFilter] = useState("all"); // all | in_progress | completed | not_started
   const [tagFilter, setTagFilter] = useState(null);
 
-  useEffect(() => {
+  const loadLibrary = () => {
+    setError(null);
     api.getCourses().then(setCourses).catch((e) => setError(e.message));
     api.getFeatured().then(setFeatured).catch(() => {});
     api.getContinueWatching().then(setContinueWatching).catch(() => {});
+  };
+
+  useEffect(() => {
+    loadLibrary();
+    const refresh = () => loadLibrary();
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
   }, []);
 
   const allTags = useMemo(() => {
@@ -74,6 +86,7 @@ export default function CourseGrid() {
         <IconLibrary width={40} height={40} />
         <p className="empty-state-title">No courses yet</p>
         <p className="empty-state-sub">Drop course folders into the courses/ directory, then rescan the library from Admin.</p>
+        <button className="btn btn-primary" onClick={loadLibrary}>Refresh courses</button>
       </div>
     );
   }
