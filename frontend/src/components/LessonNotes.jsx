@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useEditor, EditorContent, NodeViewWrapper, ReactNodeViewRenderer } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Underline from "@tiptap/extension-underline";
@@ -80,6 +80,7 @@ const StudyImage = Image.extend({
 
 export default function LessonNotes({ lessonId }) {
   const [editing, setEditing] = useState(false), [savedHtml, setSavedHtml] = useState(""), [status, setStatus] = useState("");
+  const alignmentSelection = useRef(null);
   const authorizeImages = value => value.replace(/src="(\/api\/notes\/images\/[^"]+)"/g, (_, src) => `src="${api.authenticatedAssetUrl(src)}"`);
   const stripTokens = value => value.replace(/(\/api\/notes\/images\/[a-f0-9-]+\.(?:png|jpe?g|webp|gif))\?t=[^"&]*/g, "$1");
 
@@ -115,15 +116,29 @@ export default function LessonNotes({ lessonId }) {
   const save = async () => { setStatus("Saving…"); try { const r = await api.saveNote(lessonId, stripTokens(editor.getHTML())); const h = authorizeImages(r.content_html || ""); setSavedHtml(h); editor.commands.setContent(h || "<p></p>"); setEditing(false); setStatus("Saved"); } catch(e) { setStatus(e.message); } };
   const cancel = () => { editor.commands.setContent(savedHtml || "<p></p>"); setEditing(false); setStatus(""); };
   const exportPdf = () => {
-    const win = window.open("", "_blank", "noopener,noreferrer"); if (!win) return setStatus("Allow pop-ups to export PDF");
-    win.document.write(`<!doctype html><html><head><title>Lesson note</title><style>@page{margin:18mm}body{font:15px/1.6 Arial;color:#111}h1{font-size:28px}h2{font-size:23px}h3{font-size:19px}img{max-width:100%;max-height:700px;object-fit:contain}table{border-collapse:collapse;width:100%}td,th{border:1px solid #777;padding:6px}blockquote{border-left:3px solid #555;padding-left:12px;color:#444}</style></head><body><h1>Lesson notes</h1>${editor.getHTML()}</body></html>`);
-    win.document.close(); win.focus(); setTimeout(() => win.print(), 350);
+    const win = window.open("about:blank", "_blank");
+    if (!win) return setStatus("Allow pop-ups to export PDF");
+    const html = editor.getHTML();
+    win.document.open();
+    win.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Lesson notes</title><style>@page{margin:18mm}body{font:15px/1.6 Arial;color:#111}h1{font-size:28px}h2{font-size:23px}h3{font-size:19px}img{max-width:100%;max-height:700px;object-fit:contain}table{border-collapse:collapse;width:100%}td,th{border:1px solid #777;padding:6px}blockquote{border-left:3px solid #555;padding-left:12px;color:#444}</style></head><body><h1>Lesson notes</h1>${html}<script>window.addEventListener('load',async()=>{await Promise.all(Array.from(document.images).map(i=>i.complete?Promise.resolve():new Promise(r=>{i.onload=i.onerror=r})));setTimeout(()=>window.print(),200)})<\/script></body></html>`);
+    win.document.close();
+    win.opener = null;
   };
   if (!editor) return null;
   const imageSelected = editor.isActive("image");
-  const applyAlignment = align => imageSelected
-    ? editor.chain().focus().updateAttributes("image", { align }).run()
-    : editor.chain().focus().setTextAlign(align).run();
+  const rememberAlignmentSelection = () => {
+    const { from, to } = editor.state.selection;
+    alignmentSelection.current = { from, to, image: editor.isActive("image") };
+  };
+  const applyAlignment = align => {
+    const remembered = alignmentSelection.current;
+    const chain = editor.chain().focus();
+    if (remembered?.from != null) chain.setTextSelection({ from: remembered.from, to: remembered.to });
+    const isImage = remembered?.image || editor.isActive("image");
+    if (isImage) chain.updateAttributes("image", { align }).run();
+    else chain.setTextAlign(align).run();
+    alignmentSelection.current = null;
+  };
   const addImageCaption = () => {
     if (!imageSelected) return;
     const current = editor.getAttributes("image").caption || "";
@@ -139,7 +154,7 @@ export default function LessonNotes({ lessonId }) {
       <button className={editor.isActive("bold")?"active":""} onClick={() => editor.chain().focus().toggleBold().run()}><b>B</b></button><button onClick={() => editor.chain().focus().toggleItalic().run()}><i>I</i></button><button onClick={() => editor.chain().focus().toggleUnderline().run()}><u>U</u></button>
       <select aria-label="List style" defaultValue="none" onChange={e => { const v=e.target.value; if(v==="bullet") editor.chain().focus().toggleBulletList().run(); if(v==="numbered") editor.chain().focus().toggleOrderedList().run(); e.target.value="none"; }}><option value="none">List</option><option value="bullet">Bullet list</option><option value="numbered">Numbered list</option></select>
       <button className={editor.isActive("blockquote")?"active":""} onClick={() => editor.chain().focus().toggleBlockquote().run()}>Quote</button>
-      <select aria-label="Alignment" value={imageSelected ? (editor.getAttributes("image").align || "left") : (editor.isActive({textAlign:"center"})?"center":editor.isActive({textAlign:"right"})?"right":"left")} onChange={e => applyAlignment(e.target.value)}><option value="left">Align left</option><option value="center">Align center</option><option value="right">Align right</option></select>
+      <select aria-label="Alignment" value={imageSelected ? (editor.getAttributes("image").align || "left") : (editor.isActive({textAlign:"center"})?"center":editor.isActive({textAlign:"right"})?"right":"left")} onPointerDown={rememberAlignmentSelection} onFocus={rememberAlignmentSelection} onChange={e => applyAlignment(e.target.value)}><option value="left">Align left</option><option value="center">Align center</option><option value="right">Align right</option></select>
       {imageSelected && <span className="image-tools"><select aria-label="Image size" value={editor.getAttributes("image").width || 100} onChange={e => editor.chain().focus().updateAttributes("image",{width:Number(e.target.value)}).run()}><option value="25">Image 25%</option><option value="50">Image 50%</option><option value="75">Image 75%</option><option value="100">Image 100%</option></select><button onClick={addImageCaption}>Add caption</button></span>}
     </div>}
     <EditorContent editor={editor} className={!editing && !savedHtml ? "notes-empty" : ""}/>
