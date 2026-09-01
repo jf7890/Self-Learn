@@ -294,12 +294,12 @@ function CoursesPanel() {
       <div className="card ct-table-card">
         <table className="ct-table ct-courses-table">
           <thead>
-            <tr><th>Course</th><th>Tags</th><th>Lessons</th><th>Featured</th><th>Hidden</th></tr>
+            <tr><th>Course</th><th>Tags</th><th>Lessons</th><th>Featured</th><th>Hidden</th><th>Open</th></tr>
           </thead>
           <tbody>
             {courses.map((c) => (
               <tr key={c.id} className={c.is_hidden ? "ct-row-hidden" : ""}>
-                <td className="ct-course-title-cell">{c.title}</td>
+                <td className="ct-course-title-cell"><Link to={`/course/${c.id}`}>{c.title}</Link></td>
                 <td>
                   <input
                     className="ct-tags-input"
@@ -329,6 +329,7 @@ function CoursesPanel() {
                     <IconEyeOff width={13} height={13} /> {c.is_hidden ? "Hidden" : "Hide"}
                   </button>
                 </td>
+                <td><Link className="btn btn-primary btn-sm ct-view-course" to={`/course/${c.id}`}>View course</Link></td>
               </tr>
             ))}
           </tbody>
@@ -339,6 +340,9 @@ function CoursesPanel() {
         .ct-courses-table th:nth-child(1) { width: 32%; }
         .ct-courses-table th:nth-child(2) { width: 28%; }
         .ct-course-title-cell { font-weight: 500; }
+        .ct-course-title-cell a { color: var(--text); text-decoration: none; }
+        .ct-course-title-cell a:hover { color: var(--accent); text-decoration: underline; }
+        .ct-view-course { white-space: nowrap; text-decoration: none; }
         .ct-row-hidden { opacity: 0.55; }
         .ct-tags-input {
           width: 100%;
