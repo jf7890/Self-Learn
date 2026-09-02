@@ -100,8 +100,10 @@ SKIP_EXT = {".html", ".htm", ".url"}
 SKIP_NAME_PATTERNS = {"bonus resources", "get bonus downloads here", "bonus downloads"}
 QUIZ_HINTS = ("quiz", "exam", "test")
 
-# Separator can be a dash/dot/underscore OR plain whitespace ("3 Setting up...")
-NUM_PREFIX_RE = re.compile(r"^(\d+)[\s\-._]+(.+)$")
+# Separator can be a dash/dot/underscore OR plain whitespace ("3 Setting up...").
+# Also accept common section folders such as "Part1- Introduction" and
+# "Part 2 - Ethernet LANs".
+NUM_PREFIX_RE = re.compile(r"^(?:part\s*)?(\d+)[\s\-._]+(.+)$", re.IGNORECASE)
 # A subtitle file's stem may end in a language code before its real
 # extension, e.g. "3. Introduction.en_US" (from "3. Introduction.en_US.srt")
 # — this strips that suffix to get the stem to match against a video by.
