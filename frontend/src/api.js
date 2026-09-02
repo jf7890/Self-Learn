@@ -11,7 +11,7 @@ async function request(path, options = {}) {
 
   const res = await fetch(`${BASE}${path}`, { ...options, headers });
 
-  if (res.status === 401) {
+  if (res.status === 401 && !options.skipAuthRedirect) {
     localStorage.removeItem("ct_token");
     localStorage.removeItem("ct_user");
     window.location.href = "/login";
@@ -53,9 +53,9 @@ export const api = {
   setup: (username, password) =>
     request("/auth/setup", { method: "POST", body: JSON.stringify({ username, password }) }),
   login: (username, password) =>
-    request("/auth/login", { method: "POST", body: JSON.stringify({ username, password }) }),
+    request("/auth/login", { method: "POST", body: JSON.stringify({ username, password }), skipAuthRedirect: true }),
   jellyfinLogin: (username, password) =>
-    request("/auth/jellyfin/login", { method: "POST", body: JSON.stringify({ username, password }) }),
+    request("/auth/jellyfin/login", { method: "POST", body: JSON.stringify({ username, password }), skipAuthRedirect: true }),
   getCourses: () => request("/courses"),
   getFeatured: () => request("/featured"),
   getCourse: (id) => request(`/courses/${id}`),
