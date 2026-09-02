@@ -137,7 +137,11 @@ If the frontend is served from a domain, use the exact origin:
 CORS_ORIGINS=https://learn.example.com
 ```
 
-Multiple origins are comma-separated.
+Multiple origins are comma-separated. For direct VM/LXC deployments, Vite automatically allows the hostnames extracted from `CORS_ORIGINS`, so there is no need to edit `frontend/vite.config.js`. If an unusual setup needs additional Host headers without adding CORS origins, set bare hostnames separately:
+
+```env
+VITE_ALLOWED_HOSTS=internal-alias.local,another-host.example.com
+```
 
 ## Data and backup
 
