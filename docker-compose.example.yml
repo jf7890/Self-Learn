@@ -1,6 +1,10 @@
+name: self-learn
+
 services:
   api:
-    build: ./server
+    build:
+      context: ./server
+    image: self-learn-api:local
     restart: unless-stopped
     environment:
       SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in .env}
@@ -13,7 +17,9 @@ services:
     ports:
       - "0.0.0.0:${API_PORT:-8000}:8000"
   web:
-    build: ./frontend
+    build:
+      context: ./frontend
+    image: self-learn-web:local
     restart: unless-stopped
     depends_on: [api]
     ports:

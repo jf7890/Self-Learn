@@ -33,11 +33,12 @@ Do not store application data inside `courses/`. Docker mounts this directory re
 
 ## Deploy with Docker Compose
 
-Requirements: Docker and Docker Compose.
+Requirements: Docker Engine with the Compose v2 plugin. The Compose specification no longer needs a top-level `version:` field.
 
 ```bash
 git clone <repository-url> Self-learn
 cd Self-learn
+cp docker-compose.example.yml docker-compose.yml
 cp .env.example .env
 ```
 
@@ -79,21 +80,29 @@ docker compose down
 
 ## Run directly on a VM/LXC
 
-Requirements:
-
-- Python 3 with `venv`
-- Node.js and npm
-- FFmpeg/FFprobe
+For a fresh Debian/Ubuntu VM or LXC, use the setup script. It installs Python, FFmpeg/FFprobe and Node.js 20 when needed, generates `.env`, and installs locked dependencies:
 
 ```bash
 git clone <repository-url> Self-learn
 cd Self-learn
-cp .env.example .env
-# Edit SECRET_KEY and CORS_ORIGINS
+chmod +x setup-local.sh run-local.sh
+sudo ./setup-local.sh
 ./run-local.sh
 ```
 
-The script installs Python and frontend dependencies on first launch, then listens on all interfaces:
+The installer preserves an existing `.env`, `courses/`, and `data/`. Review `.env` after setup if the server IP/domain differs from the detected address.
+
+For manual installation, provide Python 3 with `venv`, Node.js 20+, npm, and FFmpeg/FFprobe, then run:
+
+```bash
+cp .env.example .env
+python3 -m venv .venv
+.venv/bin/pip install -r server/requirements.txt
+npm --prefix frontend ci
+./run-local.sh
+```
+
+The startup script listens on all interfaces:
 
 - Web: `http://SERVER_IP:4173`
 - API: `http://SERVER_IP:8000`
@@ -110,7 +119,10 @@ Stop it with `Ctrl+C`.
 | `data/ulearn.db` | SQLite users, progress, settings and note HTML |
 | `data/note-images/` | Images pasted into private notes |
 | `frontend/public/` | Default logo and favicon assets |
+| `setup-local.sh` | One-time Debian/Ubuntu VM/LXC dependency installer |
 | `run-local.sh` | Direct VM/LXC startup script |
+| `server/requirements.txt` | Pinned Python package versions |
+| `frontend/package-lock.json` | Locked frontend dependency tree used by `npm ci` |
 
 Optional ports can be added to `.env`:
 
