@@ -175,7 +175,9 @@ def is_skipped(file_name: str) -> bool:
 
 def detect_media_type(file_name: str) -> str:
     stem, ext = os.path.splitext(file_name.lower())
-    if any(hint in stem for hint in QUIZ_HINTS):
+    # Match quiz hints as words, not substrings: "examples" contains "exam"
+    # but is still an ordinary video lesson.
+    if any(re.search(rf"(?<![a-z0-9]){re.escape(hint)}(?![a-z0-9])", stem) for hint in QUIZ_HINTS):
         return "quiz"
     if ext in VIDEO_EXT:
         return "video"
