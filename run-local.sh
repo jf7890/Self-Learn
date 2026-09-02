@@ -2,6 +2,10 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 [ -f .env ] || { echo "Create .env from .env.example and set SECRET_KEY" >&2; exit 1; }
+command -v ffprobe >/dev/null 2>&1 || {
+  echo "FFprobe is required to read lesson durations. Install FFmpeg, then run again." >&2
+  exit 1
+}
 set -a; source .env; set +a
 export ULEARN_DB="${ULEARN_DB:-$PWD/data/ulearn.db}"
 export COURSES_ROOT="${COURSES_ROOT:-$PWD/courses}"
