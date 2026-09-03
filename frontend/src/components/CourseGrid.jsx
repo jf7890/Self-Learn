@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
-import { IconLibrary, IconPlay, BrandMark } from "../icons.jsx";
+import { IconLibrary, IconPlay, IconLock, BrandMark } from "../icons.jsx";
 
 // deterministic gradient per course, from a small warm/cool palette that
 // stays in-family with the marigold accent rather than random hues
@@ -51,6 +51,7 @@ export default function CourseGrid() {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all"); // all | in_progress | completed | not_started
   const [tagFilter, setTagFilter] = useState(null);
+  const [deniedCourse, setDeniedCourse] = useState(null);
 
   const loadLibrary = () => {
     setError(null);
@@ -112,12 +113,11 @@ export default function CourseGrid() {
           <h2 className="ct-featured-heading">Featured</h2>
           <div className="ct-featured-row">
             {featured.map((c) => (
-              <Link key={c.id} to={`/course/${c.id}`} className="ct-featured-card" style={{ background: thumbGradient(c.title) }}>
-                <div className="ct-featured-info">
-                  <p className="ct-featured-title">{c.title}</p>
-                  <p className="ct-featured-meta">{c.lesson_count} lessons{c.percent_complete > 0 ? ` · ${c.percent_complete}% complete` : ""}</p>
-                </div>
-              </Link>
+              c.has_access ? <Link key={c.id} to={`/course/${c.id}`} className="ct-featured-card" style={{ background: thumbGradient(c.title) }}>
+                <div className="ct-featured-info"><p className="ct-featured-title">{c.title}</p><p className="ct-featured-meta">{c.lesson_count} lessons{c.percent_complete > 0 ? ` · ${c.percent_complete}% complete` : ""}</p></div>
+              </Link> : <button key={c.id} type="button" className="ct-featured-card ct-course-locked" style={{ background: thumbGradient(c.title) }} onClick={() => setDeniedCourse(c)}>
+                <IconLock width={22} height={22} className="ct-lock-icon" /><div className="ct-featured-info"><p className="ct-featured-title">{c.title}</p><p className="ct-featured-meta">Access required</p></div>
+              </button>
             ))}
           </div>
         </div>
@@ -185,12 +185,13 @@ export default function CourseGrid() {
         </div>
       ) : (
         <div className="ct-grid">
-          {filtered.map((c) => (
-            <Link key={c.id} to={`/course/${c.id}`} className="ct-card">
+          {filtered.map((c) => { const CardTag = c.has_access ? Link : "button"; return (
+            <CardTag key={c.id} {...(c.has_access ? { to: `/course/${c.id}` } : { type: "button", onClick: () => setDeniedCourse(c) })} className={`ct-card ${!c.has_access ? "ct-course-locked" : ""}`}>
               <div className="ct-card-thumb" style={{ background: thumbGradient(c.title) }}>
                 <span className="ct-card-corner"><BrandMark size={11} /></span>
                 <span className="ct-card-monogram">{monogram(c.title)}</span>
                 {isRecent(c.added_at) && <span className="badge badge-complete ct-card-new">New</span>}
+                {!c.has_access && <span className="ct-card-lock"><IconLock width={24} height={24} /><small>Locked</small></span>}
                 {c.percent_complete > 0 && (
                   <span className="badge badge-accent ct-card-badge">{c.percent_complete}%</span>
                 )}
@@ -210,10 +211,14 @@ export default function CourseGrid() {
                 </div>
                 <p className="ct-card-meta">{c.completed_count} / {c.lesson_count} lessons</p>
               </div>
-            </Link>
-          ))}
+            </CardTag>
+          ); })}
         </div>
       )}
+
+      {deniedCourse && <div className="ct-access-overlay" role="dialog" aria-modal="true" aria-labelledby="access-denied-title" onMouseDown={(e) => { if (e.target === e.currentTarget) setDeniedCourse(null); }}>
+        <div className="card ct-access-denied"><div className="ct-denied-icon"><IconLock width={28} height={28} /></div><h3 id="access-denied-title">Access denied</h3><p>You don't have permission to view <strong>{deniedCourse.title}</strong>. Please contact an administrator to request access.</p><button className="btn btn-primary" onClick={() => setDeniedCourse(null)}>OK</button></div>
+      </div>}
 
       <style>{`
         .ct-featured-section { padding: var(--space-5) var(--space-5) 0; }
@@ -240,6 +245,7 @@ export default function CourseGrid() {
           transition: transform var(--dur) var(--ease);
         }
         .ct-featured-card:hover { transform: translateY(-3px); }
+        button.ct-featured-card,button.ct-card{font:inherit;text-align:left;border:0;cursor:pointer}.ct-course-locked{filter:saturate(.45);position:relative}.ct-course-locked:hover{filter:saturate(.7)}.ct-lock-icon{position:absolute;right:16px;top:16px;z-index:2}.ct-card-lock{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;background:rgba(8,11,17,.58);color:#fff;z-index:3}.ct-card-lock small{font-size:11px;font-weight:600}.ct-access-overlay{position:fixed;inset:0;background:rgba(0,0,0,.68);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px}.ct-access-denied{max-width:420px;width:100%;padding:26px;text-align:center}.ct-denied-icon{width:56px;height:56px;border-radius:50%;margin:0 auto 14px;display:flex;align-items:center;justify-content:center;background:var(--accent-soft);color:var(--accent)}.ct-access-denied h3{margin:0 0 10px}.ct-access-denied p{color:var(--text-muted);line-height:1.55;margin:0 0 20px}
         .ct-featured-card::before {
           content: "";
           position: absolute;

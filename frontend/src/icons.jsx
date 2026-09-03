@@ -233,3 +233,12 @@ export function IconSearch(props) {
 export function BrandMark({ size = 16, color: _color, ...props }) {
   return <img src="/brand-logo-192.png" width={size} height={size} alt="" style={{ objectFit: "cover", borderRadius: "18%" }} {...props} />;
 }
+
+export function IconLock(props) {
+  return (
+    <svg {...base} {...props}>
+      <rect x="4" y="10" width="16" height="11" rx="2" />
+      <path d="M8 10V7a4 4 0 0 1 8 0v3" />
+    </svg>
+  );
+}

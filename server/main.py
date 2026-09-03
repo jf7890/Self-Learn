@@ -502,30 +502,33 @@ def _course_with_stats(conn, course, user_id: int) -> dict:
 def list_courses(current=Depends(get_current_user)):
     user_id = int(current["sub"])
     with get_conn() as conn:
-        if current.get("is_admin"):
-            courses = conn.execute("SELECT * FROM courses WHERE is_hidden = 0 ORDER BY title").fetchall()
-        else:
-            courses = conn.execute(
-                "SELECT c.* FROM courses c JOIN course_access a ON a.course_id = c.id "
-                "WHERE a.user_id = ? AND c.is_hidden = 0 ORDER BY c.title",
-                (user_id,),
-            ).fetchall()
-        return [_course_with_stats(conn, c, user_id) for c in courses]
+        courses = conn.execute("SELECT * FROM courses WHERE is_hidden = 0 ORDER BY title").fetchall()
+        result = []
+        for course in courses:
+            item = _course_with_stats(conn, course, user_id)
+            item["has_access"] = bool(current.get("is_admin")) or _can_access_course(conn, current, course["id"])
+            # Do not expose learner-specific progress for a locked course.
+            if not item["has_access"]:
+                item["completed_count"] = 0
+                item["percent_complete"] = 0
+            result.append(item)
+        return result
 
 
 @app.get("/featured")
 def featured_courses(current=Depends(get_current_user)):
     user_id = int(current["sub"])
     with get_conn() as conn:
-        if current.get("is_admin"):
-            courses = conn.execute("SELECT * FROM courses WHERE is_featured = 1 AND is_hidden = 0 ORDER BY added_at DESC").fetchall()
-        else:
-            courses = conn.execute(
-                "SELECT c.* FROM courses c JOIN course_access a ON a.course_id = c.id "
-                "WHERE a.user_id = ? AND c.is_featured = 1 AND c.is_hidden = 0 ORDER BY c.added_at DESC",
-                (user_id,),
-            ).fetchall()
-        return [_course_with_stats(conn, c, user_id) for c in courses]
+        courses = conn.execute("SELECT * FROM courses WHERE is_featured = 1 AND is_hidden = 0 ORDER BY added_at DESC").fetchall()
+        result = []
+        for course in courses:
+            item = _course_with_stats(conn, course, user_id)
+            item["has_access"] = bool(current.get("is_admin")) or _can_access_course(conn, current, course["id"])
+            if not item["has_access"]:
+                item["completed_count"] = 0
+                item["percent_complete"] = 0
+            result.append(item)
+        return result
 
 
 @app.get("/courses/{course_id}")
