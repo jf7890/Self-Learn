@@ -132,6 +132,23 @@ CREATE TABLE IF NOT EXISTS lesson_notes (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (user_id, lesson_id)
 );
+
+CREATE TABLE IF NOT EXISTS course_access (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    course_id INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+    granted_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    granted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, course_id)
+);
+CREATE INDEX IF NOT EXISTS idx_course_access_course ON course_access(course_id);
+
+CREATE TABLE IF NOT EXISTS note_images (
+    name TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    lesson_id INTEGER NOT NULL REFERENCES lessons(id) ON DELETE CASCADE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_note_images_user ON note_images(user_id);
 """
 
 DEFAULT_SETTINGS = {
@@ -176,8 +193,20 @@ def init_db():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
+    # Record whether ACL existed before applying the schema. On the first
+    # ACL-aware startup, grant every existing non-admin user every existing
+    # course so upgrades do not unexpectedly lock learners out. Users/courses
+    # created later are deny-by-default and must be granted by an admin.
+    had_course_access = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='course_access'"
+    ).fetchone() is not None
     conn.executescript(SCHEMA)
     _migrate(conn)
+    if not had_course_access:
+        conn.execute(
+            "INSERT OR IGNORE INTO course_access(user_id, course_id) "
+            "SELECT u.id, c.id FROM users u CROSS JOIN courses c WHERE u.is_admin = 0"
+        )
     for key, value in DEFAULT_SETTINGS.items():
         conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))
     conn.commit()

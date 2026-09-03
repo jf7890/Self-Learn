@@ -30,6 +30,9 @@ export default function VideoPlayer({ lesson, lessons, onNext, onProgress }) {
   const [showSpeedMenu, setShowSpeedMenu] = useState(false);
   const [showControls, setShowControls] = useState(true);
   const [nextPrompt, setNextPrompt] = useState(false);
+  const [buffering, setBuffering] = useState(false);
+  const [bufferedEnd, setBufferedEnd] = useState(0);
+  const [mediaError, setMediaError] = useState("");
   const controlsTimeout = useRef(null);
   const durationReportedRef = useRef(false);
   const autoCompletedRef = useRef(false);
@@ -83,7 +86,7 @@ export default function VideoPlayer({ lesson, lessons, onNext, onProgress }) {
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
-    setNextPrompt(false);
+    setNextPrompt(false); setBuffering(false); setBufferedEnd(0); setMediaError("");
     durationReportedRef.current = false;
     autoCompletedRef.current = false;
     const resumeAt = lesson.position_seconds || 0;
@@ -130,6 +133,17 @@ export default function VideoPlayer({ lesson, lessons, onNext, onProgress }) {
       durationReportedRef.current = true;
       api.reportDuration(lesson.id, d).catch(() => {});
     }
+  };
+
+  const updateBuffered = () => {
+    const v = videoRef.current;
+    if (!v || !v.buffered?.length) return setBufferedEnd(0);
+    for (let i = 0; i < v.buffered.length; i++) {
+      if (v.currentTime >= v.buffered.start(i) && v.currentTime <= v.buffered.end(i)) {
+        setBufferedEnd(v.buffered.end(i)); return;
+      }
+    }
+    setBufferedEnd(v.buffered.end(v.buffered.length - 1));
   };
 
   const handleEnded = () => {
@@ -190,7 +204,14 @@ export default function VideoPlayer({ lesson, lessons, onNext, onProgress }) {
       <video
         ref={videoRef}
         src={api.mediaUrl(lesson.id)}
-        onPlay={() => setPlaying(true)}
+        preload="auto"
+        onPlay={() => { setPlaying(true); setBuffering(false); }}
+        onPlaying={() => { setPlaying(true); setBuffering(false); setMediaError(""); }}
+        onWaiting={() => setBuffering(true)}
+        onStalled={() => setBuffering(true)}
+        onCanPlay={() => setBuffering(false)}
+        onProgress={updateBuffered}
+        onError={() => { setBuffering(false); setMediaError("Video could not be loaded. Check your connection and try again."); }}
         onPause={() => setPlaying(false)}
         onTimeUpdate={handleTimeUpdate}
         onDurationChange={handleDurationChange}
@@ -211,6 +232,11 @@ export default function VideoPlayer({ lesson, lessons, onNext, onProgress }) {
         ))}
       </video>
 
+      {(buffering || mediaError) && <div className="ct-buffer-state" role="status">
+        {buffering && !mediaError && <><span className="spinner" /> Buffering…</>}
+        {mediaError && <><span>{mediaError}</span><button className="btn btn-primary btn-sm" onClick={() => { const v=videoRef.current; setMediaError(""); v?.load(); v?.play().catch(()=>{}); }}>Retry</button></>}
+      </div>}
+
       {nextPrompt && nextLesson && (
         <div className="ct-next-card">
           <span>Next: {nextLesson.title}</span>
@@ -229,6 +255,7 @@ export default function VideoPlayer({ lesson, lessons, onNext, onProgress }) {
           onTouchStart={handleBarTouch}
           onTouchMove={handleBarTouch}
         >
+          <div className="ct-scrubber-buffer" style={{ width: `${(bufferedEnd / duration || 0) * 100}%` }} />
           <div className="ct-scrubber-fill" style={{ width: `${(current / duration || 0) * 100}%` }} />
           <div className="ct-scrubber-handle" style={{ left: `${(current / duration || 0) * 100}%` }} />
         </div>
@@ -300,6 +327,7 @@ export default function VideoPlayer({ lesson, lessons, onNext, onProgress }) {
           display: block;
           object-fit: contain;
         }
+        .ct-buffer-state{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;gap:10px;background:rgba(0,0,0,.35);color:#fff;font-size:14px;pointer-events:none}.ct-buffer-state .btn{pointer-events:auto}.ct-buffer-state .spinner{width:22px;height:22px}
         .ct-next-card {
           position: absolute;
           right: 16px;
@@ -348,6 +376,7 @@ export default function VideoPlayer({ lesson, lessons, onNext, onProgress }) {
           background: rgba(255,255,255,0.25);
           border-radius: 2px;
         }
+        .ct-scrubber-buffer { position:absolute; height:4px; background:rgba(255,255,255,.45); border-radius:2px; }
         .ct-scrubber-fill {
           position: absolute;
           height: 4px;

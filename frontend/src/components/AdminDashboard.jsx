@@ -116,6 +116,7 @@ function MembersPanel() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [error, setError] = useState(null);
   const [creating, setCreating] = useState(false);
+  const [accessUser, setAccessUser] = useState(null);
 
   const load = () => api.listUsers().then(setUsers).catch((e) => setError(e.message));
   useEffect(() => {
@@ -170,6 +171,7 @@ function MembersPanel() {
                 <td className="ct-muted-cell">{u.jellyfin_user_id ? "Jellyfin" : "Local"}</td>
                 <td className="ct-muted-cell">{formatLastLogin(u.last_login_at)}</td>
                 <td className="ct-table-actions">
+                  {!u.is_admin && <button className="btn btn-secondary btn-sm" onClick={() => setAccessUser(u)}>Course access</button>}
                   <button className="btn btn-danger btn-sm" onClick={() => handleDelete(u.id)}>Remove</button>
                 </td>
               </tr>
@@ -177,6 +179,8 @@ function MembersPanel() {
           </tbody>
         </table>
       </div>
+
+      {accessUser && <CourseAccessEditor user={accessUser} onClose={() => setAccessUser(null)} />}
 
       {!showCreate ? (
         <button className="btn btn-secondary" onClick={() => setShowCreate(true)} style={{ alignSelf: "flex-start" }}>
@@ -239,7 +243,7 @@ function MembersPanel() {
         .ct-table tr:last-child td { border-bottom: none; }
         .ct-invite-badge { margin-left: 8px; font-size: 10px; }
         .ct-muted-cell { color: var(--text-muted); }
-        .ct-table-actions { text-align: right; }
+        .ct-table-actions { text-align: right; display:flex; justify-content:flex-end; gap:6px; }
         .ct-inline-form {
           display: flex;
           flex-direction: column;
@@ -252,6 +256,28 @@ function MembersPanel() {
       `}</style>
     </div>
   );
+}
+
+function CourseAccessEditor({ user, onClose }) {
+  const [data, setData] = useState(null);
+  const [selected, setSelected] = useState(new Set());
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    api.getUserCourseAccess(user.id).then((r) => { setData(r); setSelected(new Set(r.courses.filter((c) => c.granted).map((c) => c.id))); }).catch((e) => setError(e.message));
+  }, [user.id]);
+  const toggle = (id) => setSelected((old) => { const next = new Set(old); next.has(id) ? next.delete(id) : next.add(id); return next; });
+  const save = async () => { setSaving(true); setError(""); try { await api.setUserCourseAccess(user.id, [...selected]); onClose(); } catch(e) { setError(e.message); } finally { setSaving(false); } };
+  return <div className="card ct-access-editor">
+    <div className="ct-access-head"><div><strong>Course access — {user.username}</strong><p>Changes are enforced by the API, including video, subtitles, notes and progress.</p></div><button className="btn btn-ghost btn-sm" onClick={onClose}>Close</button></div>
+    {error && <p className="alert alert-danger">{error}</p>}
+    {!data ? <span className="spinner" /> : <>
+      <div className="ct-access-actions"><button className="btn btn-secondary btn-sm" onClick={() => setSelected(new Set(data.courses.map(c=>c.id)))}>Select all</button><button className="btn btn-secondary btn-sm" onClick={() => setSelected(new Set())}>Select none</button></div>
+      <div className="ct-access-list">{data.courses.map((c) => <label key={c.id} className="ct-checkbox"><input type="checkbox" checked={selected.has(c.id)} onChange={() => toggle(c.id)} /> {c.title}</label>)}</div>
+      <div className="ct-access-save"><button className="btn btn-primary" disabled={saving} onClick={save}>{saving ? "Saving…" : "Save access"}</button></div>
+    </>}
+    <style>{`.ct-access-editor{padding:18px}.ct-access-head{display:flex;justify-content:space-between;gap:12px}.ct-access-head p{margin:5px 0 0;color:var(--text-muted);font-size:12px}.ct-access-actions{display:flex;gap:8px;margin:14px 0}.ct-access-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;max-height:320px;overflow:auto}.ct-access-save{display:flex;justify-content:flex-end;margin-top:16px}`}</style>
+  </div>;
 }
 
 function CoursesPanel() {

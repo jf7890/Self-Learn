@@ -4,13 +4,19 @@ Self-hosted video learning platform for personal use or small teams. Add course 
 
 ## Features
 
-- Local accounts and per-user learning progress
+- Local accounts, per-user learning progress and admin-managed course access
 - Automatic course/lesson discovery from folders
-- MP4 streaming with seeking and saved playback position
+- Robust MP4 Range streaming, buffering feedback, seeking and saved playback position
 - Private rich-text notes with headings, lists, quotes, pasted images and PDF export
 - Responsive desktop/mobile interface
 - SQLite database; suitable for a small deployment
 - Custom logo, title and other settings from the admin panel
+
+## Course access control
+
+Administrators can open **Admin → Members → Course access** to grant or revoke individual courses. Admin accounts always have access to every course. Authorization is enforced by the API for course details, media, attachments, subtitles, notes, comments and progress—not merely hidden in the frontend.
+
+When upgrading an existing installation, the first startup grants existing non-admin users access to all courses that already exist, preserving previous behavior. New users and courses are deny-by-default until an administrator grants access. Revoking access does not delete a learner's notes or progress.
 
 ## Course structure
 

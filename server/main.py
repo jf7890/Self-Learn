@@ -444,6 +444,40 @@ def set_password_via_token(token: str, body: SetPasswordRequest):
 # Courses
 # ---------------------------------------------------------------------------
 
+def _can_access_course(conn, current: dict, course_id: int) -> bool:
+    if bool(current.get("is_admin")):
+        return conn.execute("SELECT 1 FROM courses WHERE id = ?", (course_id,)).fetchone() is not None
+    return conn.execute(
+        "SELECT 1 FROM course_access WHERE user_id = ? AND course_id = ?",
+        (int(current["sub"]), course_id),
+    ).fetchone() is not None
+
+def _require_course_access(conn, current: dict, course_id: int):
+    # Deliberately return 404 so an unauthorized user cannot enumerate IDs.
+    if not _can_access_course(conn, current, course_id):
+        raise HTTPException(status_code=404, detail="Course not found")
+
+def _course_id_for_lesson(conn, lesson_id: int):
+    row = conn.execute(
+        "SELECT s.course_id FROM lessons l JOIN sections s ON s.id = l.section_id WHERE l.id = ?",
+        (lesson_id,),
+    ).fetchone()
+    return row["course_id"] if row else None
+
+def _require_lesson_access(conn, current: dict, lesson_id: int):
+    course_id = _course_id_for_lesson(conn, lesson_id)
+    if course_id is None:
+        raise HTTPException(status_code=404, detail="Lesson not found")
+    _require_course_access(conn, current, course_id)
+    return course_id
+
+def _safe_course_path(relative_path: str) -> str:
+    root = os.path.realpath(COURSES_ROOT)
+    candidate = os.path.realpath(os.path.join(root, relative_path))
+    if os.path.commonpath((root, candidate)) != root:
+        raise HTTPException(status_code=404, detail="File not found")
+    return candidate
+
 def _course_with_stats(conn, course, user_id: int) -> dict:
     total = conn.execute(
         "SELECT COUNT(*) c FROM lessons l JOIN sections s ON l.section_id = s.id "
@@ -468,9 +502,14 @@ def _course_with_stats(conn, course, user_id: int) -> dict:
 def list_courses(current=Depends(get_current_user)):
     user_id = int(current["sub"])
     with get_conn() as conn:
-        courses = conn.execute(
-            "SELECT * FROM courses WHERE is_hidden = 0 ORDER BY title"
-        ).fetchall()
+        if current.get("is_admin"):
+            courses = conn.execute("SELECT * FROM courses WHERE is_hidden = 0 ORDER BY title").fetchall()
+        else:
+            courses = conn.execute(
+                "SELECT c.* FROM courses c JOIN course_access a ON a.course_id = c.id "
+                "WHERE a.user_id = ? AND c.is_hidden = 0 ORDER BY c.title",
+                (user_id,),
+            ).fetchall()
         return [_course_with_stats(conn, c, user_id) for c in courses]
 
 
@@ -478,9 +517,14 @@ def list_courses(current=Depends(get_current_user)):
 def featured_courses(current=Depends(get_current_user)):
     user_id = int(current["sub"])
     with get_conn() as conn:
-        courses = conn.execute(
-            "SELECT * FROM courses WHERE is_featured = 1 AND is_hidden = 0 ORDER BY added_at DESC"
-        ).fetchall()
+        if current.get("is_admin"):
+            courses = conn.execute("SELECT * FROM courses WHERE is_featured = 1 AND is_hidden = 0 ORDER BY added_at DESC").fetchall()
+        else:
+            courses = conn.execute(
+                "SELECT c.* FROM courses c JOIN course_access a ON a.course_id = c.id "
+                "WHERE a.user_id = ? AND c.is_featured = 1 AND c.is_hidden = 0 ORDER BY c.added_at DESC",
+                (user_id,),
+            ).fetchall()
         return [_course_with_stats(conn, c, user_id) for c in courses]
 
 
@@ -489,7 +533,7 @@ def get_course(course_id: int, current=Depends(get_current_user)):
     user_id = int(current["sub"])
     with get_conn() as conn:
         course = conn.execute("SELECT * FROM courses WHERE id = ?", (course_id,)).fetchone()
-        if not course:
+        if not course or not _can_access_course(conn, current, course_id):
             raise HTTPException(status_code=404, detail="Course not found")
 
         sections = conn.execute(
@@ -545,8 +589,7 @@ class NoteUpdate(BaseModel):
 def get_lesson_note(lesson_id: int, current=Depends(get_current_user)):
     user_id = int(current["sub"])
     with get_conn() as conn:
-        if not conn.execute("SELECT 1 FROM lessons WHERE id = ?", (lesson_id,)).fetchone():
-            raise HTTPException(status_code=404, detail="Lesson not found")
+        _require_lesson_access(conn, current, lesson_id)
         row = conn.execute("SELECT content_html, updated_at FROM lesson_notes WHERE user_id = ? AND lesson_id = ?", (user_id, lesson_id)).fetchone()
     return row_to_dict(row) if row else {"content_html": "", "updated_at": None}
 
@@ -555,8 +598,7 @@ def save_lesson_note(lesson_id: int, body: NoteUpdate, current=Depends(get_curre
     user_id = int(current["sub"])
     clean = sanitize_note_html(body.content_html)
     with get_conn() as conn:
-        if not conn.execute("SELECT 1 FROM lessons WHERE id = ?", (lesson_id,)).fetchone():
-            raise HTTPException(status_code=404, detail="Lesson not found")
+        _require_lesson_access(conn, current, lesson_id)
         conn.execute("INSERT INTO lesson_notes(user_id, lesson_id, content_html, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(user_id, lesson_id) DO UPDATE SET content_html=excluded.content_html, updated_at=CURRENT_TIMESTAMP", (user_id, lesson_id, clean))
         row = conn.execute("SELECT content_html, updated_at FROM lesson_notes WHERE user_id = ? AND lesson_id = ?", (user_id, lesson_id)).fetchone()
     return row_to_dict(row)
@@ -565,8 +607,7 @@ def save_lesson_note(lesson_id: int, body: NoteUpdate, current=Depends(get_curre
 async def upload_note_image(lesson_id: int, file: UploadFile = File(...), current=Depends(get_current_user)):
     user_id = int(current["sub"])
     with get_conn() as conn:
-        if not conn.execute("SELECT 1 FROM lessons WHERE id = ?", (lesson_id,)).fetchone():
-            raise HTTPException(status_code=404, detail="Lesson not found")
+        _require_lesson_access(conn, current, lesson_id)
     data = await file.read(MAX_NOTE_IMAGE_BYTES + 1)
     if not data or len(data) > MAX_NOTE_IMAGE_BYTES:
         raise HTTPException(status_code=400, detail="Image must be between 1 byte and 8 MB")
@@ -579,16 +620,30 @@ async def upload_note_image(lesson_id: int, file: UploadFile = File(...), curren
     name = f"{uuid.uuid4()}.{ext}"
     with open(os.path.join(user_dir, name), "wb") as out:
         out.write(data)
+    with get_conn() as conn:
+        conn.execute("INSERT INTO note_images(name, user_id, lesson_id) VALUES (?, ?, ?)", (name, user_id, lesson_id))
     return {"url": f"/api/notes/images/{name}"}
 
 @app.get("/notes/images/{name}")
 def serve_note_image(name: str, current=Depends(get_current_user)):
     if not re.fullmatch(r"[a-f0-9-]+\.(?:png|jpe?g|webp|gif)", name):
         raise HTTPException(status_code=404, detail="Image not found")
-    path = os.path.join(NOTE_IMAGES_DIR, str(int(current["sub"])), name)
+    user_id = int(current["sub"])
+    path = os.path.join(NOTE_IMAGES_DIR, str(user_id), name)
     if not os.path.isfile(path):
         raise HTTPException(status_code=404, detail="Image not found")
-    return FileResponse(path)
+    with get_conn() as conn:
+        reference = f"/api/notes/images/{name}"
+        row = conn.execute(
+            "SELECT s.course_id FROM note_images i JOIN lessons l ON l.id=i.lesson_id "
+            "JOIN sections s ON s.id=l.section_id WHERE i.user_id=? AND i.name=? "
+            "UNION SELECT s.course_id FROM lesson_notes n JOIN lessons l ON l.id=n.lesson_id "
+            "JOIN sections s ON s.id=l.section_id WHERE n.user_id=? AND instr(n.content_html, ?) > 0 LIMIT 1",
+            (user_id, name, user_id, reference),
+        ).fetchone()
+        if not row or not _can_access_course(conn, current, row["course_id"]):
+            raise HTTPException(status_code=404, detail="Image not found")
+    return FileResponse(path, headers={"Cache-Control": "private, max-age=3600", "X-Content-Type-Options": "nosniff"})
 
 # ---------------------------------------------------------------------------
 # Media streaming (range-request aware — required for video seek to work)
@@ -596,33 +651,65 @@ def serve_note_image(name: str, current=Depends(get_current_user)):
 
 CHUNK_SIZE = 1024 * 1024  # 1MB
 
+def _range_not_satisfiable(file_size: int):
+    return Response(status_code=416, headers={
+        "Content-Range": f"bytes */{file_size}",
+        "Accept-Ranges": "bytes",
+    })
 
-@app.get("/media/{lesson_id}")
+def _parse_single_range(value: str, file_size: int):
+    # RFC 7233 single byte range only. Browsers do not need multipart ranges.
+    match = re.fullmatch(r"bytes=(\d*)-(\d*)", value.strip())
+    if not match or file_size <= 0:
+        return None
+    first, last = match.groups()
+    if not first and not last:
+        return None
+    if len(first) > 20 or len(last) > 20:
+        return None
+    if not first:  # suffix range: bytes=-500
+        suffix = int(last)
+        if suffix <= 0:
+            return None
+        start = max(0, file_size - suffix)
+        return start, file_size - 1
+    start = int(first)
+    if start >= file_size:
+        return None
+    end = int(last) if last else file_size - 1
+    if end < start:
+        return None
+    return start, min(end, file_size - 1)
+
+@app.api_route("/media/{lesson_id}", methods=["GET", "HEAD"])
 def stream_media(lesson_id: int, request: Request, current=Depends(get_current_user)):
     with get_conn() as conn:
         lesson = conn.execute("SELECT * FROM lessons WHERE id = ?", (lesson_id,)).fetchone()
-    if not lesson:
-        raise HTTPException(status_code=404, detail="Lesson not found")
+        if not lesson:
+            raise HTTPException(status_code=404, detail="Lesson not found")
+        _require_lesson_access(conn, current, lesson_id)
 
-    file_path = os.path.join(COURSES_ROOT, lesson["relative_path"])
+    file_path = _safe_course_path(lesson["relative_path"])
     if not os.path.isfile(file_path):
         raise HTTPException(status_code=404, detail="File missing on disk")
 
     file_size = os.path.getsize(file_path)
     content_type = mimetypes.guess_type(file_path)[0] or "application/octet-stream"
-
+    common = {"Accept-Ranges": "bytes", "Cache-Control": "private, max-age=3600"}
     range_header = request.headers.get("range")
     if not range_header:
-        return FileResponse(file_path, media_type=content_type)
+        if request.method == "HEAD":
+            return Response(status_code=200, media_type=content_type, headers={**common, "Content-Length": str(file_size)})
+        return FileResponse(file_path, media_type=content_type, headers=common)
 
-    try:
-        start_str, _, end_str = range_header.replace("bytes=", "").partition("-")
-        start = int(start_str) if start_str else 0
-        end = int(end_str) if end_str else min(start + CHUNK_SIZE * 4, file_size - 1)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid Range header")
-    end = min(end, file_size - 1)
+    byte_range = _parse_single_range(range_header, file_size)
+    if byte_range is None:
+        return _range_not_satisfiable(file_size)
+    start, end = byte_range
     length = end - start + 1
+    headers = {**common, "Content-Range": f"bytes {start}-{end}/{file_size}", "Content-Length": str(length)}
+    if request.method == "HEAD":
+        return Response(status_code=206, media_type=content_type, headers=headers)
 
     def iter_chunk():
         with open(file_path, "rb") as f:
@@ -634,22 +721,17 @@ def stream_media(lesson_id: int, request: Request, current=Depends(get_current_u
                     break
                 remaining -= len(chunk)
                 yield chunk
-
-    headers = {
-        "Content-Range": f"bytes {start}-{end}/{file_size}",
-        "Accept-Ranges": "bytes",
-        "Content-Length": str(length),
-    }
     return StreamingResponse(iter_chunk(), status_code=206, media_type=content_type, headers=headers)
-
 
 @app.get("/attachments/{attachment_id}")
 def download_attachment(attachment_id: int, current=Depends(get_current_user)):
     with get_conn() as conn:
         att = conn.execute("SELECT * FROM attachments WHERE id = ?", (attachment_id,)).fetchone()
+        if att:
+            _require_course_access(conn, current, att["course_id"])
     if not att:
         raise HTTPException(status_code=404, detail="Attachment not found")
-    file_path = os.path.join(COURSES_ROOT, att["relative_path"])
+    file_path = _safe_course_path(att["relative_path"])
     if not os.path.isfile(file_path):
         raise HTTPException(status_code=404, detail="File missing on disk")
     return FileResponse(file_path, filename=att["file_name"])
@@ -674,9 +756,11 @@ def get_subtitle(subtitle_id: int, current=Depends(get_current_user)):
     browsers support in a <track> element."""
     with get_conn() as conn:
         sub = conn.execute("SELECT * FROM subtitles WHERE id = ?", (subtitle_id,)).fetchone()
+        if sub:
+            _require_lesson_access(conn, current, sub["lesson_id"])
     if not sub:
         raise HTTPException(status_code=404, detail="Subtitle not found")
-    file_path = os.path.join(COURSES_ROOT, sub["relative_path"])
+    file_path = _safe_course_path(sub["relative_path"])
     if not os.path.isfile(file_path):
         raise HTTPException(status_code=404, detail="Subtitle file missing on disk")
 
@@ -713,6 +797,7 @@ def set_lesson_duration(lesson_id: int, body: DurationUpdate, current=Depends(ge
     if body.duration_seconds <= 0:
         return {"ok": False}
     with get_conn() as conn:
+        _require_lesson_access(conn, current, lesson_id)
         conn.execute("UPDATE lessons SET duration_seconds = ? WHERE id = ?", (body.duration_seconds, lesson_id))
     return {"ok": True}
 
@@ -738,8 +823,9 @@ def continue_watching(current=Depends(get_current_user)):
             "JOIN sections s ON s.id = l.section_id "
             "JOIN courses c ON c.id = s.course_id "
             "WHERE p.user_id = ? AND p.completed = 0 AND p.position_seconds > 5 "
+            "AND (? = 1 OR EXISTS (SELECT 1 FROM course_access a WHERE a.user_id = ? AND a.course_id = c.id)) "
             "ORDER BY p.updated_at DESC",
-            (user_id,),
+            (user_id, int(bool(current.get("is_admin"))), user_id),
         ).fetchall()
 
         seen_courses = set()
@@ -780,7 +866,9 @@ def my_stats(current=Depends(get_current_user)):
     user_id = int(current["sub"])
     with get_conn() as conn:
         lessons_completed = conn.execute(
-            "SELECT COUNT(*) c FROM progress WHERE user_id = ? AND completed = 1", (user_id,)
+            "SELECT COUNT(*) c FROM progress p JOIN lessons l ON l.id=p.lesson_id JOIN sections s ON s.id=l.section_id "
+            "WHERE p.user_id = ? AND p.completed = 1 AND (?=1 OR EXISTS (SELECT 1 FROM course_access a WHERE a.user_id=? AND a.course_id=s.course_id))",
+            (user_id, int(bool(current.get("is_admin"))), user_id)
         ).fetchone()["c"]
 
         courses_completed = conn.execute(
@@ -790,24 +878,28 @@ def my_stats(current=Depends(get_current_user)):
             "  FROM lessons l "
             "  JOIN sections s ON l.section_id = s.id "
             "  LEFT JOIN progress p ON p.lesson_id = l.id AND p.user_id = ? "
+            "  WHERE (?=1 OR EXISTS (SELECT 1 FROM course_access a WHERE a.user_id=? AND a.course_id=s.course_id)) "
             "  GROUP BY s.course_id "
             "  HAVING total > 0 AND total = done"
             ")",
-            (user_id,),
+            (user_id, int(bool(current.get("is_admin"))), user_id),
         ).fetchone()["c"]
 
         watch_seconds = conn.execute(
             "SELECT COALESCE(SUM(COALESCE(l.duration_seconds, p.position_seconds)), 0) s "
-            "FROM progress p JOIN lessons l ON l.id = p.lesson_id "
-            "WHERE p.user_id = ? AND p.completed = 1",
-            (user_id,),
+            "FROM progress p JOIN lessons l ON l.id = p.lesson_id JOIN sections s ON s.id=l.section_id "
+            "WHERE p.user_id = ? AND p.completed = 1 "
+            "AND (?=1 OR EXISTS (SELECT 1 FROM course_access a WHERE a.user_id=? AND a.course_id=s.course_id))",
+            (user_id, int(bool(current.get("is_admin"))), user_id),
         ).fetchone()["s"]
 
         user_row = conn.execute("SELECT created_at FROM users WHERE id = ?", (user_id,)).fetchone()
 
         date_rows = conn.execute(
-            "SELECT DISTINCT DATE(updated_at) d FROM progress WHERE user_id = ? ORDER BY d DESC",
-            (user_id,),
+            "SELECT DISTINCT DATE(p.updated_at) d FROM progress p JOIN lessons l ON l.id=p.lesson_id "
+            "JOIN sections s ON s.id=l.section_id WHERE p.user_id = ? "
+            "AND (?=1 OR EXISTS (SELECT 1 FROM course_access a WHERE a.user_id=? AND a.course_id=s.course_id)) ORDER BY d DESC",
+            (user_id, int(bool(current.get("is_admin"))), user_id),
         ).fetchall()
 
     return {
@@ -842,6 +934,7 @@ class ProgressUpdate(BaseModel):
 def update_progress(body: ProgressUpdate, current=Depends(get_current_user)):
     user_id = int(current["sub"])
     with get_conn() as conn:
+        _require_lesson_access(conn, current, body.lesson_id)
         course_row = None
         was_complete_before = False
         if body.completed:
@@ -888,6 +981,7 @@ class CommentCreate(BaseModel):
 @app.get("/lessons/{lesson_id}/comments")
 def list_comments(lesson_id: int, current=Depends(get_current_user)):
     with get_conn() as conn:
+        _require_lesson_access(conn, current, lesson_id)
         rows = conn.execute(
             "SELECT c.id, c.body, c.created_at, c.user_id, u.username, u.is_admin "
             "FROM comments c JOIN users u ON u.id = c.user_id "
@@ -907,6 +1001,7 @@ def create_comment(lesson_id: int, body: CommentCreate, current=Depends(get_curr
 
     user_id = int(current["sub"])
     with get_conn() as conn:
+        _require_lesson_access(conn, current, lesson_id)
         lesson = conn.execute("SELECT id FROM lessons WHERE id = ?", (lesson_id,)).fetchone()
         if not lesson:
             raise HTTPException(status_code=404, detail="Lesson not found")
@@ -928,9 +1023,13 @@ def delete_comment(comment_id: int, current=Depends(get_current_user)):
     user_id = int(current["sub"])
     is_admin = bool(current.get("is_admin"))
     with get_conn() as conn:
-        row = conn.execute("SELECT user_id FROM comments WHERE id = ?", (comment_id,)).fetchone()
+        row = conn.execute(
+            "SELECT c.user_id, s.course_id FROM comments c JOIN lessons l ON l.id=c.lesson_id "
+            "JOIN sections s ON s.id=l.section_id WHERE c.id = ?", (comment_id,)
+        ).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Comment not found")
+        _require_course_access(conn, current, row["course_id"])
         if row["user_id"] != user_id and not is_admin:
             raise HTTPException(status_code=403, detail="Can't delete someone else's comment")
         conn.execute("DELETE FROM comments WHERE id = ?", (comment_id,))
@@ -1030,6 +1129,41 @@ def reset_password(user_id: int, body: ResetPasswordRequest, current=Depends(req
     with get_conn() as conn:
         conn.execute("UPDATE users SET password_hash = ? WHERE id = ?", (hash_password(body.password), user_id))
     return {"ok": True}
+
+class CourseAccessUpdate(BaseModel):
+    course_ids: list[int] = []
+
+@app.get("/admin/users/{user_id}/course-access")
+def get_user_course_access(user_id: int, current=Depends(require_admin)):
+    with get_conn() as conn:
+        user = conn.execute("SELECT id, username, is_admin FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        courses = conn.execute(
+            "SELECT c.id, c.title, CASE WHEN a.user_id IS NULL THEN 0 ELSE 1 END AS granted "
+            "FROM courses c LEFT JOIN course_access a ON a.course_id=c.id AND a.user_id=? ORDER BY c.title",
+            (user_id,),
+        ).fetchall()
+    return {"user": row_to_dict(user), "courses": [row_to_dict(row) for row in courses]}
+
+@app.put("/admin/users/{user_id}/course-access")
+def set_user_course_access(user_id: int, body: CourseAccessUpdate, current=Depends(require_admin)):
+    requested = set(body.course_ids)
+    with get_conn() as conn:
+        user = conn.execute("SELECT id, is_admin FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        if user["is_admin"]:
+            raise HTTPException(status_code=400, detail="Admins already have access to every course")
+        valid = {row["id"] for row in conn.execute("SELECT id FROM courses").fetchall()}
+        if not requested.issubset(valid):
+            raise HTTPException(status_code=400, detail="One or more course IDs are invalid")
+        conn.execute("DELETE FROM course_access WHERE user_id = ?", (user_id,))
+        conn.executemany(
+            "INSERT INTO course_access(user_id, course_id, granted_by) VALUES (?, ?, ?)",
+            [(user_id, course_id, int(current["sub"])) for course_id in sorted(requested)],
+        )
+    return {"ok": True, "course_ids": sorted(requested)}
 
 
 # ---------------------------------------------------------------------------

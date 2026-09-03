@@ -91,6 +91,8 @@ export const api = {
   deleteUser: (id) => request(`/admin/users/${id}`, { method: "DELETE" }),
   resetPassword: (id, password) =>
     request(`/admin/users/${id}/reset-password`, { method: "POST", body: JSON.stringify({ password }) }),
+  getUserCourseAccess: (id) => request(`/admin/users/${id}/course-access`),
+  setUserCourseAccess: (id, courseIds) => request(`/admin/users/${id}/course-access`, { method: "PUT", body: JSON.stringify({ course_ids: courseIds }) }),
   getAdminSettings: () => request("/admin/settings"),
   updateAdminSettings: (jellyfinAuthEnabled, jellyfinUrl) =>
     request("/admin/settings", {
