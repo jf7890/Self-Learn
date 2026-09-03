@@ -204,7 +204,7 @@ export default function VideoPlayer({ lesson, lessons, onNext, onProgress }) {
       <video
         ref={videoRef}
         src={api.mediaUrl(lesson.id)}
-        preload="auto"
+        preload="metadata"
         onPlay={() => { setPlaying(true); setBuffering(false); }}
         onPlaying={() => { setPlaying(true); setBuffering(false); setMediaError(""); }}
         onWaiting={() => setBuffering(true)}

@@ -13,6 +13,7 @@ class SecurityHelpersTest(unittest.TestCase):
     def test_ranges(self):
         self.assertEqual(main._parse_single_range("bytes=0-99", 1000), (0, 99))
         self.assertEqual(main._parse_single_range("bytes=900-", 1000), (900, 999))
+        self.assertEqual(main._parse_single_range("bytes=100-", 20_000_000), (100, 100 + main.RANGE_WINDOW_BYTES - 1))
         self.assertEqual(main._parse_single_range("bytes=-100", 1000), (900, 999))
         self.assertIsNone(main._parse_single_range("bytes=1000-", 1000))
         self.assertIsNone(main._parse_single_range("bytes=20-10", 1000))

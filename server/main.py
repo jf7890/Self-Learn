@@ -652,7 +652,8 @@ def serve_note_image(name: str, current=Depends(get_current_user)):
 # Media streaming (range-request aware — required for video seek to work)
 # ---------------------------------------------------------------------------
 
-CHUNK_SIZE = 1024 * 1024  # 1MB
+CHUNK_SIZE = 1024 * 1024  # 1MB read chunks
+RANGE_WINDOW_BYTES = 4 * 1024 * 1024  # bounded responses work reliably through Vite/Cloudflare
 
 def _range_not_satisfiable(file_size: int):
     return Response(status_code=416, headers={
@@ -679,7 +680,7 @@ def _parse_single_range(value: str, file_size: int):
     start = int(first)
     if start >= file_size:
         return None
-    end = int(last) if last else file_size - 1
+    end = int(last) if last else min(start + RANGE_WINDOW_BYTES - 1, file_size - 1)
     if end < start:
         return None
     return start, min(end, file_size - 1)
