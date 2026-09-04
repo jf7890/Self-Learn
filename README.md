@@ -126,7 +126,9 @@ Stop it with `Ctrl+C`.
 | `data/note-images/` | Images pasted into private notes |
 | `frontend/public/` | Default logo and favicon assets |
 | `setup-local.sh` | One-time Debian/Ubuntu VM/LXC dependency installer |
-| `run-local.sh` | Direct VM/LXC startup script |
+| `run-local.sh` | Direct VM/LXC development startup script (Vite + Uvicorn) |
+| `deploy-production.sh` | Install/update the Nginx + systemd production deployment |
+| `deploy/` | Versioned Nginx and systemd templates |
 | `server/requirements.txt` | Pinned Python package versions |
 | `frontend/package-lock.json` | Locked frontend dependency tree used by `npm ci` |
 
@@ -143,7 +145,7 @@ If the frontend is served from a domain, use the exact origin:
 CORS_ORIGINS=https://learn.example.com
 ```
 
-Multiple origins are comma-separated. For direct VM/LXC deployments, Vite automatically allows the hostnames extracted from `CORS_ORIGINS`, so there is no need to edit `frontend/vite.config.js`. If an unusual setup needs additional Host headers without adding CORS origins, set bare hostnames separately:
+Multiple origins are comma-separated. For direct VM/LXC **development**, Vite automatically allows the hostnames extracted from `CORS_ORIGINS`, so there is no need to edit `frontend/vite.config.js`. Production uses the Nginx template in `deploy/`; `vite.config.js` remains in the repository for local development. If an unusual development setup needs additional Host headers without adding CORS origins, set bare hostnames separately:
 
 ```env
 VITE_ALLOWED_HOSTS=internal-alias.local,another-host.example.com
@@ -181,12 +183,17 @@ Docker:
 docker compose up -d --build
 ```
 
-VM/LXC: stop the current process and run `./run-local.sh` again. If dependencies changed, run:
+VM/LXC development: stop the current process and run `./run-local.sh` again.
+
+VM/LXC production (Nginx + systemd):
 
 ```bash
+git pull --ff-only
 .venv/bin/pip install -r server/requirements.txt
-npm --prefix frontend install
+sudo ./deploy-production.sh
 ```
+
+The production script builds the frontend into `/var/www/selflearn`, installs the versioned service/proxy templates, restarts `selflearn-api`, reloads Nginx, and runs health checks. Adjust paths/domain/ports in `deploy/selflearn-api.service` and `deploy/nginx-selflearn.conf` when deploying somewhere other than `/root/Self-Learn`.
 
 ## License
 

@@ -1,0 +1,21 @@
+[Unit]
+Description=Self Learn FastAPI
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/Self-Learn
+EnvironmentFile=/root/Self-Learn/.env
+Environment=ULEARN_DB=/root/Self-Learn/data/ulearn.db
+Environment=COURSES_ROOT=/root/Self-Learn/courses
+ExecStart=/root/Self-Learn/.venv/bin/uvicorn main:app --app-dir server --host 127.0.0.1 --port 8000
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
