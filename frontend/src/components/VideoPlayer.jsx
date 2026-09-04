@@ -163,8 +163,8 @@ export default function VideoPlayer({ lesson, lessons, onNext, onProgress }) {
     const v = videoRef.current;
     if (!v) return;
     v.currentTime = Math.max(0, Math.min(v.duration || Infinity, v.currentTime + seconds));
-    revealControls();
-  }, [revealControls]);
+    setShowControls(true);
+  }, []);
 
   const changeVolume = (value) => {
     const next = Number(value);
