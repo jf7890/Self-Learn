@@ -653,7 +653,7 @@ def serve_note_image(name: str, current=Depends(get_current_user)):
 # ---------------------------------------------------------------------------
 
 CHUNK_SIZE = 1024 * 1024  # 1MB read chunks
-RANGE_WINDOW_BYTES = 4 * 1024 * 1024  # bounded responses work reliably through Vite/Cloudflare
+RANGE_WINDOW_BYTES = 8 * 1024 * 1024  # balance ahead-buffering with reliable Vite/Cloudflare responses
 
 def _range_not_satisfiable(file_size: int):
     return Response(status_code=416, headers={

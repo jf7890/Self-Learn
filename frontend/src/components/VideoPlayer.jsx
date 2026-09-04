@@ -33,6 +33,7 @@ export default function VideoPlayer({ lesson, lessons, onNext, onProgress }) {
   const [showControls, setShowControls] = useState(true);
   const [nextPrompt, setNextPrompt] = useState(false);
   const [buffering, setBuffering] = useState(false);
+  const [preloadMode, setPreloadMode] = useState("metadata");
   const [bufferedEnd, setBufferedEnd] = useState(0);
   const [mediaError, setMediaError] = useState("");
   const controlsTimeout = useRef(null);
@@ -88,7 +89,7 @@ export default function VideoPlayer({ lesson, lessons, onNext, onProgress }) {
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
-    setNextPrompt(false); setBuffering(false); setBufferedEnd(0); setMediaError("");
+    setNextPrompt(false); setBuffering(false); setPreloadMode("metadata"); setBufferedEnd(0); setMediaError("");
     durationReportedRef.current = false;
     autoCompletedRef.current = false;
     const resumeAt = lesson.position_seconds || 0;
@@ -244,8 +245,8 @@ export default function VideoPlayer({ lesson, lessons, onNext, onProgress }) {
       <video
         ref={videoRef}
         src={api.mediaUrl(lesson.id)}
-        preload="metadata"
-        onPlay={() => { setPlaying(true); setBuffering(false); }}
+        preload={preloadMode}
+        onPlay={() => { setPlaying(true); setBuffering(false); setPreloadMode("auto"); }}
         onPlaying={() => { setPlaying(true); setBuffering(false); setMediaError(""); }}
         onWaiting={() => setBuffering(true)}
         onStalled={() => setBuffering(true)}
@@ -312,6 +313,7 @@ export default function VideoPlayer({ lesson, lessons, onNext, onProgress }) {
           </div>
 
           <span className="ct-time">{formatTime(current)} / {formatTime(duration)}</span>
+          {duration > 0 && bufferedEnd > current + 0.5 && <span className="ct-buffer-ahead" title="Video buffered ahead">+{Math.floor(bufferedEnd - current)}s buffered</span>}
 
           <div className="ct-spacer" />
 
@@ -456,6 +458,7 @@ export default function VideoPlayer({ lesson, lessons, onNext, onProgress }) {
         }
         .ct-icon-btn:active { background: rgba(255,255,255,0.12); }
         .ct-time { color: #cfd3dc; font-size: 13px; font-variant-numeric: tabular-nums; }
+        .ct-buffer-ahead { color:rgba(255,255,255,.68); font-size:11px; white-space:nowrap; font-variant-numeric:tabular-nums; }
         .ct-spacer { flex: 1; }
         .ct-volume { display:flex; align-items:center; }
         .ct-volume input { width:76px; accent-color:var(--accent); cursor:pointer; }
@@ -504,6 +507,7 @@ export default function VideoPlayer({ lesson, lessons, onNext, onProgress }) {
           .ct-controls-row { gap: 3px; }
           .ct-volume input { width: 52px; }
           .ct-time { font-size: 11px; }
+          .ct-buffer-ahead { display:none; }
         }
         @media (max-width: 430px) {
           .ct-volume input { display:none; }
