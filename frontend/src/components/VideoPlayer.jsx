@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { api } from "../api";
-import { IconPlay, IconPause, IconFullscreen } from "../icons.jsx";
+import { IconPlay, IconPause, IconFullscreen, IconVolume, IconVolumeMuted, IconReplay10, IconForward10 } from "../icons.jsx";
 
 const SPEEDS = [1, 1.25, 1.5, 2];
 
@@ -27,6 +27,8 @@ export default function VideoPlayer({ lesson, lessons, onNext, onProgress }) {
   const [current, setCurrent] = useState(0);
   const [duration, setDuration] = useState(0);
   const [speed, setSpeed] = useState(1);
+  const [volume, setVolume] = useState(() => Number(localStorage.getItem("ct_volume") ?? 1));
+  const [muted, setMuted] = useState(() => localStorage.getItem("ct_muted") === "1");
   const [showSpeedMenu, setShowSpeedMenu] = useState(false);
   const [showControls, setShowControls] = useState(true);
   const [nextPrompt, setNextPrompt] = useState(false);
@@ -157,6 +159,26 @@ export default function VideoPlayer({ lesson, lessons, onNext, onProgress }) {
     if (v.paused) v.play(); else v.pause();
   };
 
+  const skip = useCallback((seconds) => {
+    const v = videoRef.current;
+    if (!v) return;
+    v.currentTime = Math.max(0, Math.min(v.duration || Infinity, v.currentTime + seconds));
+    revealControls();
+  }, [revealControls]);
+
+  const changeVolume = (value) => {
+    const next = Number(value);
+    setVolume(next); localStorage.setItem("ct_volume", String(next));
+    if (videoRef.current) videoRef.current.volume = next;
+    if (next > 0 && muted) { setMuted(false); localStorage.setItem("ct_muted", "0"); }
+  };
+
+  const toggleMute = () => {
+    const next = !muted;
+    setMuted(next); localStorage.setItem("ct_muted", next ? "1" : "0");
+    if (videoRef.current) videoRef.current.muted = next;
+  };
+
   const seekTo = (fraction) => {
     const v = videoRef.current;
     if (!v || !duration) return;
@@ -193,6 +215,24 @@ export default function VideoPlayer({ lesson, lessons, onNext, onProgress }) {
       if (playing) setShowControls(false);
     }, 2800);
   }, [playing]);
+
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    v.volume = Math.max(0, Math.min(1, volume));
+    v.muted = muted;
+  }, [lesson.id]);
+
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      if (["INPUT", "TEXTAREA", "SELECT"].includes(e.target?.tagName) || e.target?.isContentEditable) return;
+      if (e.key === "ArrowLeft") { e.preventDefault(); skip(-10); }
+      if (e.key === "ArrowRight") { e.preventDefault(); skip(10); }
+      if (e.key.toLowerCase() === "m") { e.preventDefault(); toggleMute(); }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [skip, muted]);
 
   // chapter markers: lessons within this section, positioned along this
   // lesson's own duration isn't meaningful across files, so instead we
@@ -264,6 +304,12 @@ export default function VideoPlayer({ lesson, lessons, onNext, onProgress }) {
           <button className="ct-icon-btn" onClick={togglePlay} aria-label={playing ? "Pause" : "Play"}>
             {playing ? <IconPause width={20} height={20} fill="currentColor" /> : <IconPlay width={20} height={20} fill="currentColor" />}
           </button>
+          <button className="ct-icon-btn ct-skip-btn" onClick={() => skip(-10)} aria-label="Back 10 seconds" title="Back 10 seconds (←)"><IconReplay10 width={22} height={22} /></button>
+          <button className="ct-icon-btn ct-skip-btn" onClick={() => skip(10)} aria-label="Forward 10 seconds" title="Forward 10 seconds (→)"><IconForward10 width={22} height={22} /></button>
+          <div className="ct-volume">
+            <button className="ct-icon-btn" onClick={toggleMute} aria-label={muted ? "Unmute" : "Mute"} title="Mute (M)">{muted || volume === 0 ? <IconVolumeMuted width={20} height={20} /> : <IconVolume width={20} height={20} />}</button>
+            <input type="range" min="0" max="1" step="0.05" value={muted ? 0 : volume} onChange={(e) => changeVolume(e.target.value)} aria-label="Volume" />
+          </div>
 
           <span className="ct-time">{formatTime(current)} / {formatTime(duration)}</span>
 
@@ -411,6 +457,9 @@ export default function VideoPlayer({ lesson, lessons, onNext, onProgress }) {
         .ct-icon-btn:active { background: rgba(255,255,255,0.12); }
         .ct-time { color: #cfd3dc; font-size: 13px; font-variant-numeric: tabular-nums; }
         .ct-spacer { flex: 1; }
+        .ct-volume { display:flex; align-items:center; }
+        .ct-volume input { width:76px; accent-color:var(--accent); cursor:pointer; }
+        .ct-skip-btn { padding-left:5px; padding-right:5px; }
 
         .ct-speed-wrap { position: relative; }
         .ct-speed-btn {
@@ -451,7 +500,13 @@ export default function VideoPlayer({ lesson, lessons, onNext, onProgress }) {
         @media (max-width: 640px) {
           .ct-player { border-radius: 0; aspect-ratio: 16/9; }
           .ct-controls { padding: 8px 10px 10px; }
-          .ct-icon-btn { padding: 10px; }
+          .ct-icon-btn { padding: 8px; }
+          .ct-controls-row { gap: 3px; }
+          .ct-volume input { width: 52px; }
+          .ct-time { font-size: 11px; }
+        }
+        @media (max-width: 430px) {
+          .ct-volume input { display:none; }
         }
       `}</style>
     </div>

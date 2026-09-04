@@ -28,6 +28,18 @@ export function IconFullscreen(props) {
     </svg>
   );
 }
+export function IconVolume(props) {
+  return <svg {...base} {...props}><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" /><path d="M15.5 8.5a5 5 0 0 1 0 7M18 6a8.5 8.5 0 0 1 0 12" /></svg>;
+}
+export function IconVolumeMuted(props) {
+  return <svg {...base} {...props}><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" /><path d="m16 9 5 6M21 9l-5 6" /></svg>;
+}
+export function IconReplay10(props) {
+  return <svg {...base} {...props}><path d="M3 9V4l3 3a9 9 0 1 1-1.7 9" /><text x="12" y="16" textAnchor="middle" fontSize="8" stroke="none" fill="currentColor">10</text></svg>;
+}
+export function IconForward10(props) {
+  return <svg {...base} {...props}><path d="M21 9V4l-3 3a9 9 0 1 0 1.7 9" /><text x="12" y="16" textAnchor="middle" fontSize="8" stroke="none" fill="currentColor">10</text></svg>;
+}
 export function IconCheck(props) {
   return <svg {...base} {...props}><polyline points="20 6 9 17 4 12" /></svg>;
 }
