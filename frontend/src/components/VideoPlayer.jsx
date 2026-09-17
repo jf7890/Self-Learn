@@ -313,7 +313,6 @@ export default function VideoPlayer({ lesson, lessons, onNext, onProgress }) {
           </div>
 
           <span className="ct-time">{formatTime(current)} / {formatTime(duration)}</span>
-          {duration > 0 && bufferedEnd > current + 0.5 && <span className="ct-buffer-ahead" title="Video buffered ahead">+{Math.floor(bufferedEnd - current)}s buffered</span>}
 
           <div className="ct-spacer" />
 
@@ -458,7 +457,6 @@ export default function VideoPlayer({ lesson, lessons, onNext, onProgress }) {
         }
         .ct-icon-btn:active { background: rgba(255,255,255,0.12); }
         .ct-time { color: #cfd3dc; font-size: 13px; font-variant-numeric: tabular-nums; }
-        .ct-buffer-ahead { color:rgba(255,255,255,.68); font-size:11px; white-space:nowrap; font-variant-numeric:tabular-nums; }
         .ct-spacer { flex: 1; }
         .ct-volume { display:flex; align-items:center; }
         .ct-volume input { width:76px; accent-color:var(--accent); cursor:pointer; }
@@ -507,7 +505,6 @@ export default function VideoPlayer({ lesson, lessons, onNext, onProgress }) {
           .ct-controls-row { gap: 3px; }
           .ct-volume input { width: 52px; }
           .ct-time { font-size: 11px; }
-          .ct-buffer-ahead { display:none; }
         }
         @media (max-width: 430px) {
           .ct-volume input { display:none; }
