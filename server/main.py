@@ -20,7 +20,7 @@ import tempfile
 import io
 import uuid
 import imghdr
-from datetime import date, timedelta, datetime
+from datetime import datetime
 from fastapi import FastAPI, Depends, HTTPException, Request, UploadFile, File
 from fastapi.responses import StreamingResponse, FileResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -37,7 +37,6 @@ from auth import (
     require_admin,
 )
 from scanner import scan_all, COURSES_ROOT
-import notifications
 import mailer
 import auth
 import rate_limit
@@ -50,6 +49,8 @@ from access.policies import (
 )
 from services.note_sanitizer import sanitize_note_html
 from services.ranges import RANGE_WINDOW_BYTES, parse_single_range
+from routers.comments import router as comments_router
+from routers.progress import router as progress_router
 from schemas import (
     BrandingUpdate,
     SetupRequest,
@@ -58,8 +59,6 @@ from schemas import (
     SetPasswordRequest,
     NoteUpdate,
     DurationUpdate,
-    ProgressUpdate,
-    CommentCreate,
     CreateMemberRequest,
     ResetPasswordRequest,
     CourseAccessUpdate,
@@ -72,6 +71,8 @@ from schemas import (
 )
 
 app = FastAPI(title="uLearn API")
+app.include_router(progress_router)
+app.include_router(comments_router)
 
 BRANDING_DIR = os.path.join(os.path.dirname(os.environ.get("ULEARN_DB", "/data/ulearn.db")), "branding")
 ALLOWED_LOGO_TYPES = {"image/png": "png", "image/jpeg": "jpg", "image/svg+xml": "svg", "image/webp": "webp"}
@@ -704,228 +705,6 @@ def set_lesson_duration(lesson_id: int, body: DurationUpdate, current=Depends(ge
     with get_conn() as conn:
         _require_lesson_access(conn, current, lesson_id)
         conn.execute("UPDATE lessons SET duration_seconds = ? WHERE id = ?", (body.duration_seconds, lesson_id))
-    return {"ok": True}
-
-
-# ---------------------------------------------------------------------------
-# Continue watching
-# ---------------------------------------------------------------------------
-
-@app.get("/continue-watching")
-def continue_watching(current=Depends(get_current_user)):
-    """Most recently touched, not-yet-completed lesson per course — powers
-    a Netflix-style resume row. Deliberately one card per course, not one
-    per in-progress lesson, so starting several lessons in the same course
-    doesn't crowd the row with duplicates of that course."""
-    user_id = int(current["sub"])
-    with get_conn() as conn:
-        rows = conn.execute(
-            "SELECT p.position_seconds, p.updated_at, "
-            "l.id as lesson_id, l.title as lesson_title, l.duration_seconds, "
-            "s.title as section_title, c.id as course_id, c.title as course_title "
-            "FROM progress p "
-            "JOIN lessons l ON l.id = p.lesson_id "
-            "JOIN sections s ON s.id = l.section_id "
-            "JOIN courses c ON c.id = s.course_id "
-            "WHERE p.user_id = ? AND p.completed = 0 AND p.position_seconds > 5 "
-            "AND (? = 1 OR EXISTS (SELECT 1 FROM course_access a WHERE a.user_id = ? AND a.course_id = c.id)) "
-            "ORDER BY p.updated_at DESC",
-            (user_id, int(bool(current.get("is_admin"))), user_id),
-        ).fetchall()
-
-        seen_courses = set()
-        deduped = []
-        for row in rows:
-            if row["course_id"] in seen_courses:
-                continue
-            seen_courses.add(row["course_id"])
-            deduped.append(row_to_dict(row))
-            if len(deduped) >= 8:
-                break
-
-        return deduped
-
-
-def _compute_streak(date_strings: list) -> int:
-    """Consecutive days of activity, counting backward from today. Today
-    without activity yet doesn't break a streak that was active yesterday
-    — otherwise everyone's streak would show 0 first thing each morning."""
-    if not date_strings:
-        return 0
-    dates = set(date_strings)
-    today = date.today()
-    cursor = today
-    if today.isoformat() not in dates:
-        cursor = today - timedelta(days=1)
-        if cursor.isoformat() not in dates:
-            return 0
-    streak = 0
-    while cursor.isoformat() in dates:
-        streak += 1
-        cursor -= timedelta(days=1)
-    return streak
-
-
-@app.get("/me/stats")
-def my_stats(current=Depends(get_current_user)):
-    user_id = int(current["sub"])
-    with get_conn() as conn:
-        lessons_completed = conn.execute(
-            "SELECT COUNT(*) c FROM progress p JOIN lessons l ON l.id=p.lesson_id JOIN sections s ON s.id=l.section_id "
-            "WHERE p.user_id = ? AND p.completed = 1 AND (?=1 OR EXISTS (SELECT 1 FROM course_access a WHERE a.user_id=? AND a.course_id=s.course_id))",
-            (user_id, int(bool(current.get("is_admin"))), user_id)
-        ).fetchone()["c"]
-
-        courses_completed = conn.execute(
-            "SELECT COUNT(*) c FROM ("
-            "  SELECT s.course_id, COUNT(l.id) total, "
-            "         SUM(CASE WHEN p.completed = 1 THEN 1 ELSE 0 END) done "
-            "  FROM lessons l "
-            "  JOIN sections s ON l.section_id = s.id "
-            "  LEFT JOIN progress p ON p.lesson_id = l.id AND p.user_id = ? "
-            "  WHERE (?=1 OR EXISTS (SELECT 1 FROM course_access a WHERE a.user_id=? AND a.course_id=s.course_id)) "
-            "  GROUP BY s.course_id "
-            "  HAVING total > 0 AND total = done"
-            ")",
-            (user_id, int(bool(current.get("is_admin"))), user_id),
-        ).fetchone()["c"]
-
-        watch_seconds = conn.execute(
-            "SELECT COALESCE(SUM(COALESCE(l.duration_seconds, p.position_seconds)), 0) s "
-            "FROM progress p JOIN lessons l ON l.id = p.lesson_id JOIN sections s ON s.id=l.section_id "
-            "WHERE p.user_id = ? AND p.completed = 1 "
-            "AND (?=1 OR EXISTS (SELECT 1 FROM course_access a WHERE a.user_id=? AND a.course_id=s.course_id))",
-            (user_id, int(bool(current.get("is_admin"))), user_id),
-        ).fetchone()["s"]
-
-        user_row = conn.execute("SELECT created_at FROM users WHERE id = ?", (user_id,)).fetchone()
-
-        date_rows = conn.execute(
-            "SELECT DISTINCT DATE(p.updated_at) d FROM progress p JOIN lessons l ON l.id=p.lesson_id "
-            "JOIN sections s ON s.id=l.section_id WHERE p.user_id = ? "
-            "AND (?=1 OR EXISTS (SELECT 1 FROM course_access a WHERE a.user_id=? AND a.course_id=s.course_id)) ORDER BY d DESC",
-            (user_id, int(bool(current.get("is_admin"))), user_id),
-        ).fetchall()
-
-    return {
-        "lessons_completed": lessons_completed,
-        "courses_completed": courses_completed,
-        "watch_seconds": watch_seconds,
-        "member_since": user_row["created_at"] if user_row else None,
-        "streak_days": _compute_streak([r["d"] for r in date_rows]),
-    }
-
-
-def _course_fully_complete(conn, course_id: int, user_id: int) -> bool:
-    row = conn.execute(
-        "SELECT COUNT(l.id) total, SUM(CASE WHEN p.completed = 1 THEN 1 ELSE 0 END) done "
-        "FROM lessons l JOIN sections s ON l.section_id = s.id "
-        "LEFT JOIN progress p ON p.lesson_id = l.id AND p.user_id = ? "
-        "WHERE s.course_id = ?",
-        (user_id, course_id),
-    ).fetchone()
-    total = row["total"] or 0
-    done = row["done"] or 0
-    return total > 0 and total == done
-
-@app.post("/progress")
-def update_progress(body: ProgressUpdate, current=Depends(get_current_user)):
-    user_id = int(current["sub"])
-    with get_conn() as conn:
-        _require_lesson_access(conn, current, body.lesson_id)
-        course_row = None
-        was_complete_before = False
-        if body.completed:
-            course_row = conn.execute(
-                "SELECT s.course_id, c.title as course_title FROM lessons l "
-                "JOIN sections s ON l.section_id = s.id "
-                "JOIN courses c ON c.id = s.course_id "
-                "WHERE l.id = ?",
-                (body.lesson_id,),
-            ).fetchone()
-            if course_row:
-                was_complete_before = _course_fully_complete(conn, course_row["course_id"], user_id)
-
-        conn.execute(
-            "INSERT INTO progress (user_id, lesson_id, completed, position_seconds) "
-            "VALUES (?, ?, ?, ?) "
-            "ON CONFLICT(user_id, lesson_id) DO UPDATE SET "
-            "completed = MAX(progress.completed, excluded.completed), "
-            "position_seconds = excluded.position_seconds, "
-            "updated_at = CURRENT_TIMESTAMP",
-            (user_id, body.lesson_id, int(body.completed), body.position_seconds),
-        )
-
-        if course_row and not was_complete_before:
-            if _course_fully_complete(conn, course_row["course_id"], user_id):
-                notifications.notify("course_completed", {
-                    "username": current.get("username", ""),
-                    "course_title": course_row["course_title"],
-                })
-    return {"ok": True}
-
-
-# ---------------------------------------------------------------------------
-# Comments
-# ---------------------------------------------------------------------------
-
-COMMENT_MAX_LEN = 2000
-
-@app.get("/lessons/{lesson_id}/comments")
-def list_comments(lesson_id: int, current=Depends(get_current_user)):
-    with get_conn() as conn:
-        _require_lesson_access(conn, current, lesson_id)
-        rows = conn.execute(
-            "SELECT c.id, c.body, c.created_at, c.user_id, u.username, u.is_admin "
-            "FROM comments c JOIN users u ON u.id = c.user_id "
-            "WHERE c.lesson_id = ? ORDER BY c.created_at ASC",
-            (lesson_id,),
-        ).fetchall()
-        return [row_to_dict(r) for r in rows]
-
-
-@app.post("/lessons/{lesson_id}/comments")
-def create_comment(lesson_id: int, body: CommentCreate, current=Depends(get_current_user)):
-    text = body.body.strip()
-    if not text:
-        raise HTTPException(status_code=400, detail="Comment can't be empty")
-    if len(text) > COMMENT_MAX_LEN:
-        raise HTTPException(status_code=400, detail=f"Comment is too long ({COMMENT_MAX_LEN} character max)")
-
-    user_id = int(current["sub"])
-    with get_conn() as conn:
-        _require_lesson_access(conn, current, lesson_id)
-        lesson = conn.execute("SELECT id FROM lessons WHERE id = ?", (lesson_id,)).fetchone()
-        if not lesson:
-            raise HTTPException(status_code=404, detail="Lesson not found")
-
-        cur = conn.execute(
-            "INSERT INTO comments (lesson_id, user_id, body) VALUES (?, ?, ?)",
-            (lesson_id, user_id, text),
-        )
-        row = conn.execute(
-            "SELECT c.id, c.body, c.created_at, c.user_id, u.username, u.is_admin "
-            "FROM comments c JOIN users u ON u.id = c.user_id WHERE c.id = ?",
-            (cur.lastrowid,),
-        ).fetchone()
-    return row_to_dict(row)
-
-
-@app.delete("/comments/{comment_id}")
-def delete_comment(comment_id: int, current=Depends(get_current_user)):
-    user_id = int(current["sub"])
-    is_admin = bool(current.get("is_admin"))
-    with get_conn() as conn:
-        row = conn.execute(
-            "SELECT c.user_id, s.course_id FROM comments c JOIN lessons l ON l.id=c.lesson_id "
-            "JOIN sections s ON s.id=l.section_id WHERE c.id = ?", (comment_id,)
-        ).fetchone()
-        if not row:
-            raise HTTPException(status_code=404, detail="Comment not found")
-        _require_course_access(conn, current, row["course_id"])
-        if row["user_id"] != user_id and not is_admin:
-            raise HTTPException(status_code=403, detail="Can't delete someone else's comment")
-        conn.execute("DELETE FROM comments WHERE id = ?", (comment_id,))
     return {"ok": True}
 
 
