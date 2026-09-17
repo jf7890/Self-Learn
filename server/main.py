@@ -24,7 +24,6 @@ from datetime import date, timedelta, datetime
 from fastapi import FastAPI, Depends, HTTPException, Request, UploadFile, File
 from fastapi.responses import StreamingResponse, FileResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 
 from db import init_db, get_conn, row_to_dict, get_setting, set_setting, any_users_exist
 from auth import (
@@ -51,6 +50,26 @@ from access.policies import (
 )
 from services.note_sanitizer import sanitize_note_html
 from services.ranges import RANGE_WINDOW_BYTES, parse_single_range
+from schemas import (
+    BrandingUpdate,
+    SetupRequest,
+    LoginRequest,
+    ForgotPasswordRequest,
+    SetPasswordRequest,
+    NoteUpdate,
+    DurationUpdate,
+    ProgressUpdate,
+    CommentCreate,
+    CreateMemberRequest,
+    ResetPasswordRequest,
+    CourseAccessUpdate,
+    SettingsUpdate,
+    TestJellyfinRequest,
+    NotificationSettingsUpdate,
+    EmailSettingsUpdate,
+    EmailTestRequest,
+    CourseUpdate
+)
 
 app = FastAPI(title="uLearn API")
 
@@ -197,12 +216,6 @@ def get_branding_favicon():
     media_type = {v: k for k, v in ALLOWED_FAVICON_TYPES.items() if k != "image/vnd.microsoft.icon"}.get(favicon_ext, "application/octet-stream")
     return FileResponse(favicon_path, media_type=media_type)
 
-
-class BrandingUpdate(BaseModel):
-    site_name: str = "uLearn"
-    accent_color: str = "#e8a33d"
-
-
 @app.put("/admin/branding")
 def update_branding(body: BrandingUpdate, current=Depends(require_admin)):
     name = body.site_name.strip() or "uLearn"
@@ -237,12 +250,6 @@ async def upload_branding_favicon(file: UploadFile = File(...), current=Depends(
 def delete_branding_favicon(current=Depends(require_admin)):
     _delete_branding_asset("favicon", "favicon_ext")
     return {"ok": True}
-
-
-class SetupRequest(BaseModel):
-    username: str
-    password: str
-
 
 @app.post("/auth/setup")
 def setup(body: SetupRequest, request: Request):
@@ -284,12 +291,6 @@ def _log_login_attempt(user_id, username: str, ip: str, success: bool, method: s
         # opportunistic cleanup — keeps the table from growing unbounded
         # on a long-running instance without needing a scheduled job
         conn.execute("DELETE FROM login_history WHERE created_at < datetime('now', '-90 days')")
-
-
-class LoginRequest(BaseModel):
-    username: str
-    password: str
-
 
 @app.post("/auth/login")
 def login(body: LoginRequest, request: Request):
@@ -342,10 +343,6 @@ def jellyfin_login(body: LoginRequest, request: Request):
 # Invite / password reset (token-based, no auth required)
 # ---------------------------------------------------------------------------
 
-class ForgotPasswordRequest(BaseModel):
-    email: str
-
-
 @app.post("/auth/forgot-password")
 def forgot_password(body: ForgotPasswordRequest, request: Request):
     """Always returns the same generic response whether or not the email
@@ -377,11 +374,6 @@ def check_auth_token(token: str):
     if not resolved:
         raise HTTPException(status_code=400, detail="This link is invalid or has expired")
     return {"valid": True, "kind": resolved["kind"], "username": resolved["username"]}
-
-
-class SetPasswordRequest(BaseModel):
-    password: str
-
 
 @app.post("/auth/token/{token}")
 def set_password_via_token(token: str, body: SetPasswordRequest):
@@ -523,8 +515,6 @@ def get_course(course_id: int, current=Depends(get_current_user)):
 # Private study notes
 # ---------------------------------------------------------------------------
 
-class NoteUpdate(BaseModel):
-    content_html: str = ""
 
 @app.get("/lessons/{lesson_id}/note")
 def get_lesson_note(lesson_id: int, current=Depends(get_current_user)):
@@ -700,10 +690,6 @@ def get_subtitle(subtitle_id: int, current=Depends(get_current_user)):
 # Progress
 # ---------------------------------------------------------------------------
 
-class DurationUpdate(BaseModel):
-    duration_seconds: float
-
-
 @app.post("/lessons/{lesson_id}/duration")
 def set_lesson_duration(lesson_id: int, body: DurationUpdate, current=Depends(get_current_user)):
     """
@@ -842,13 +828,6 @@ def _course_fully_complete(conn, course_id: int, user_id: int) -> bool:
     done = row["done"] or 0
     return total > 0 and total == done
 
-
-class ProgressUpdate(BaseModel):
-    lesson_id: int
-    position_seconds: float
-    completed: bool = False
-
-
 @app.post("/progress")
 def update_progress(body: ProgressUpdate, current=Depends(get_current_user)):
     user_id = int(current["sub"])
@@ -891,11 +870,6 @@ def update_progress(body: ProgressUpdate, current=Depends(get_current_user)):
 # ---------------------------------------------------------------------------
 
 COMMENT_MAX_LEN = 2000
-
-
-class CommentCreate(BaseModel):
-    body: str
-
 
 @app.get("/lessons/{lesson_id}/comments")
 def list_comments(lesson_id: int, current=Depends(get_current_user)):
@@ -958,14 +932,6 @@ def delete_comment(comment_id: int, current=Depends(get_current_user)):
 # ---------------------------------------------------------------------------
 # Admin — members
 # ---------------------------------------------------------------------------
-
-class CreateMemberRequest(BaseModel):
-    username: str
-    password: str = ""
-    email: str = ""
-    send_invite: bool = False
-    is_admin: bool = False
-
 
 @app.get("/admin/users")
 def list_users(current=Depends(require_admin)):
@@ -1036,11 +1002,6 @@ def delete_user(user_id: int, current=Depends(require_admin)):
         conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
     return {"ok": True}
 
-
-class ResetPasswordRequest(BaseModel):
-    password: str
-
-
 @app.post("/admin/users/{user_id}/reset-password")
 def reset_password(user_id: int, body: ResetPasswordRequest, current=Depends(require_admin)):
     if len(body.password) < 8:
@@ -1049,8 +1010,6 @@ def reset_password(user_id: int, body: ResetPasswordRequest, current=Depends(req
         conn.execute("UPDATE users SET password_hash = ? WHERE id = ?", (hash_password(body.password), user_id))
     return {"ok": True}
 
-class CourseAccessUpdate(BaseModel):
-    course_ids: list[int] = []
 
 @app.get("/admin/users/{user_id}/course-access")
 def get_user_course_access(user_id: int, current=Depends(require_admin)):
@@ -1097,12 +1056,6 @@ def get_settings(current=Depends(require_admin)):
             "jellyfin_url": get_setting(conn, "jellyfin_url") or "",
         }
 
-
-class SettingsUpdate(BaseModel):
-    jellyfin_auth_enabled: bool
-    jellyfin_url: str = ""
-
-
 @app.put("/admin/settings")
 def update_settings(body: SettingsUpdate, current=Depends(require_admin)):
     if body.jellyfin_auth_enabled and not body.jellyfin_url.strip():
@@ -1111,11 +1064,6 @@ def update_settings(body: SettingsUpdate, current=Depends(require_admin)):
         set_setting(conn, "jellyfin_auth_enabled", "1" if body.jellyfin_auth_enabled else "0")
         set_setting(conn, "jellyfin_url", body.jellyfin_url.strip())
     return {"ok": True}
-
-
-class TestJellyfinRequest(BaseModel):
-    jellyfin_url: str = ""
-
 
 @app.post("/admin/settings/test-jellyfin")
 def test_jellyfin_connection(body: TestJellyfinRequest, current=Depends(require_admin)):
@@ -1151,17 +1099,6 @@ def get_notification_settings(current=Depends(require_admin)):
             "template_course_completed": get_setting(conn, "template_course_completed") or "",
             "template_course_added": get_setting(conn, "template_course_added") or "",
         }
-
-
-class NotificationSettingsUpdate(BaseModel):
-    discord_enabled: bool = False
-    discord_webhook_url: str = ""
-    telegram_enabled: bool = False
-    telegram_bot_token: str = ""
-    telegram_chat_id: str = ""
-    template_course_completed: str = ""
-    template_course_added: str = ""
-
 
 @app.put("/admin/notifications")
 def update_notification_settings(body: NotificationSettingsUpdate, current=Depends(require_admin)):
@@ -1245,21 +1182,6 @@ def get_email_settings(current=Depends(require_admin)):
             "template_password_reset": get_setting(conn, "template_password_reset") or "",
         }
 
-
-class EmailSettingsUpdate(BaseModel):
-    smtp_enabled: bool = False
-    smtp_host: str = ""
-    smtp_port: str = "587"
-    smtp_username: str = ""
-    smtp_password: str = ""
-    smtp_from_address: str = ""
-    smtp_from_name: str = "uLearn"
-    smtp_use_tls: bool = True
-    site_url: str = ""
-    template_invite: str = ""
-    template_password_reset: str = ""
-
-
 @app.put("/admin/email-settings")
 def update_email_settings(body: EmailSettingsUpdate, current=Depends(require_admin)):
     if body.smtp_enabled and not (body.smtp_host.strip() and body.smtp_from_address.strip()):
@@ -1286,11 +1208,6 @@ def update_email_settings(body: EmailSettingsUpdate, current=Depends(require_adm
         set_setting(conn, "template_invite", body.template_invite.strip())
         set_setting(conn, "template_password_reset", body.template_password_reset.strip())
     return {"ok": True}
-
-
-class EmailTestRequest(BaseModel):
-    to_address: str
-
 
 @app.post("/admin/email-settings/test")
 def test_email_settings(body: EmailTestRequest, current=Depends(require_admin)):
@@ -1344,13 +1261,6 @@ def admin_list_courses(current=Depends(require_admin)):
             item["lesson_count"] = total
             result.append(item)
         return result
-
-
-class CourseUpdate(BaseModel):
-    tags: str = ""
-    is_featured: bool = False
-    is_hidden: bool = False
-
 
 @app.put("/admin/courses/{course_id}")
 def admin_update_course(course_id: int, body: CourseUpdate, current=Depends(require_admin)):
