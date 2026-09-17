@@ -21,21 +21,15 @@ from fastapi import FastAPI, Depends, HTTPException, Request, UploadFile, File
 from fastapi.responses import StreamingResponse, FileResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 
-from db import init_db, get_conn, row_to_dict, get_setting, set_setting, any_users_exist
+from db import init_db, get_conn, row_to_dict, get_setting, set_setting
 from auth import (
     hash_password,
-    authenticate_local,
-    authenticate_with_jellyfin,
-    get_or_create_jellyfin_linked_user,
-    jellyfin_settings,
-    issue_token,
     get_current_user,
     require_admin,
 )
 from scanner import scan_all, COURSES_ROOT
 import mailer
 import auth
-import rate_limit
 from access.policies import (
     can_access_course,
     course_id_for_lesson,
@@ -47,13 +41,10 @@ from routers.comments import router as comments_router
 from routers.progress import router as progress_router
 from routers.notes import router as notes_router
 from routers.media import router as media_router
+from routers.auth_routes import router as auth_router
+from routers.branding import router as branding_router
 from services.ranges import RANGE_WINDOW_BYTES, parse_single_range
 from schemas import (
-    BrandingUpdate,
-    SetupRequest,
-    LoginRequest,
-    ForgotPasswordRequest,
-    SetPasswordRequest,
     DurationUpdate,
     CreateMemberRequest,
     ResetPasswordRequest,
@@ -71,56 +62,11 @@ app.include_router(progress_router)
 app.include_router(comments_router)
 app.include_router(notes_router)
 app.include_router(media_router)
+app.include_router(auth_router)
+app.include_router(branding_router)
 
 # Compatibility alias retained for existing helper tests and callers.
 _parse_single_range = parse_single_range
-
-BRANDING_DIR = os.path.join(os.path.dirname(os.environ.get("ULEARN_DB", "/data/ulearn.db")), "branding")
-ALLOWED_LOGO_TYPES = {"image/png": "png", "image/jpeg": "jpg", "image/svg+xml": "svg", "image/webp": "webp"}
-ALLOWED_FAVICON_TYPES = {
-    "image/png": "png", "image/svg+xml": "svg", "image/webp": "webp",
-    "image/x-icon": "ico", "image/vnd.microsoft.icon": "ico",
-}
-MAX_LOGO_BYTES = 2 * 1024 * 1024  # 2MB
-
-
-def _asset_path(kind: str, ext: str) -> str:
-    return os.path.join(BRANDING_DIR, f"{kind}.{ext}")
-
-
-async def _save_branding_asset(kind: str, file: UploadFile, allowed_types: dict, setting_key: str):
-    if file.content_type not in allowed_types:
-        raise HTTPException(status_code=400, detail=f"{kind.capitalize()} must be one of: {', '.join(sorted(set(allowed_types.values())))}")
-
-    contents = await file.read()
-    if len(contents) > MAX_LOGO_BYTES:
-        raise HTTPException(status_code=400, detail=f"{kind.capitalize()} must be under 2MB")
-
-    os.makedirs(BRANDING_DIR, exist_ok=True)
-    with get_conn() as conn:
-        old_ext = get_setting(conn, setting_key) or ""
-
-    if old_ext:
-        old_path = _asset_path(kind, old_ext)
-        if os.path.isfile(old_path):
-            os.remove(old_path)
-
-    ext = allowed_types[file.content_type]
-    with open(_asset_path(kind, ext), "wb") as f:
-        f.write(contents)
-
-    with get_conn() as conn:
-        set_setting(conn, setting_key, ext)
-
-
-def _delete_branding_asset(kind: str, setting_key: str):
-    with get_conn() as conn:
-        old_ext = get_setting(conn, setting_key) or ""
-        if old_ext:
-            old_path = _asset_path(kind, old_ext)
-            if os.path.isfile(old_path):
-                os.remove(old_path)
-        set_setting(conn, setting_key, "")
 
 app.add_middleware(
     CORSMiddleware,
@@ -140,258 +86,14 @@ def startup():
         )
     init_db()
 
-
-# ---------------------------------------------------------------------------
-# Public: auth config + first-run setup
-# ---------------------------------------------------------------------------
-
 @app.get("/health")
 def health():
-    """No auth — for uptime monitoring (Uptime Kuma, Docker HEALTHCHECK,
-    etc). Actually queries the database rather than just confirming the
-    process is alive, since a stuck/corrupted DB is the more likely real
-    failure mode for a small self-hosted app like this."""
     try:
         with get_conn() as conn:
             conn.execute("SELECT 1").fetchone()
         return {"status": "ok"}
-    except Exception as e:
-        raise HTTPException(status_code=503, detail=f"Database check failed: {e}")
-
-
-@app.get("/auth/config")
-def auth_config():
-    """Tells the login page whether to show setup, and whether to show
-    the 'Sign in with Jellyfin' button. No auth required — read-only."""
-    with get_conn() as conn:
-        needs_setup = not any_users_exist(conn)
-    jf = jellyfin_settings()
-    return {"needs_setup": needs_setup, "jellyfin_enabled": jf["enabled"]}
-
-
-# ---------------------------------------------------------------------------
-# Public: branding (site name, accent color, logo)
-# ---------------------------------------------------------------------------
-
-@app.get("/branding")
-def get_branding():
-    """No auth — the login and setup screens need this before anyone's
-    signed in."""
-    with get_conn() as conn:
-        site_name = get_setting(conn, "site_name") or "uLearn"
-        accent_color = get_setting(conn, "accent_color") or "#e8a33d"
-        logo_ext = get_setting(conn, "logo_ext") or ""
-        favicon_ext = get_setting(conn, "favicon_ext") or ""
-    return {
-        "site_name": site_name,
-        "accent_color": accent_color,
-        "logo_url": "/branding/logo" if logo_ext else None,
-        "favicon_url": "/branding/favicon" if favicon_ext else None,
-    }
-
-
-@app.get("/branding/logo")
-def get_branding_logo():
-    with get_conn() as conn:
-        logo_ext = get_setting(conn, "logo_ext") or ""
-    if not logo_ext:
-        raise HTTPException(status_code=404, detail="No logo uploaded")
-    logo_path = _asset_path("logo", logo_ext)
-    if not os.path.isfile(logo_path):
-        raise HTTPException(status_code=404, detail="Logo file missing on disk")
-    media_type = {v: k for k, v in ALLOWED_LOGO_TYPES.items()}.get(logo_ext, "application/octet-stream")
-    return FileResponse(logo_path, media_type=media_type)
-
-
-@app.get("/branding/favicon")
-def get_branding_favicon():
-    with get_conn() as conn:
-        favicon_ext = get_setting(conn, "favicon_ext") or ""
-    if not favicon_ext:
-        raise HTTPException(status_code=404, detail="No favicon uploaded")
-    favicon_path = _asset_path("favicon", favicon_ext)
-    if not os.path.isfile(favicon_path):
-        raise HTTPException(status_code=404, detail="Favicon file missing on disk")
-    media_type = {v: k for k, v in ALLOWED_FAVICON_TYPES.items() if k != "image/vnd.microsoft.icon"}.get(favicon_ext, "application/octet-stream")
-    return FileResponse(favicon_path, media_type=media_type)
-
-@app.put("/admin/branding")
-def update_branding(body: BrandingUpdate, current=Depends(require_admin)):
-    name = body.site_name.strip() or "uLearn"
-    color = body.accent_color.strip()
-    if not color.startswith("#") or len(color) != 7:
-        raise HTTPException(status_code=400, detail="Accent color must be a hex value like #e8a33d")
-    with get_conn() as conn:
-        set_setting(conn, "site_name", name)
-        set_setting(conn, "accent_color", color)
-    return {"ok": True}
-
-
-@app.post("/admin/branding/logo")
-async def upload_branding_logo(file: UploadFile = File(...), current=Depends(require_admin)):
-    await _save_branding_asset("logo", file, ALLOWED_LOGO_TYPES, "logo_ext")
-    return {"ok": True}
-
-
-@app.delete("/admin/branding/logo")
-def delete_branding_logo(current=Depends(require_admin)):
-    _delete_branding_asset("logo", "logo_ext")
-    return {"ok": True}
-
-
-@app.post("/admin/branding/favicon")
-async def upload_branding_favicon(file: UploadFile = File(...), current=Depends(require_admin)):
-    await _save_branding_asset("favicon", file, ALLOWED_FAVICON_TYPES, "favicon_ext")
-    return {"ok": True}
-
-
-@app.delete("/admin/branding/favicon")
-def delete_branding_favicon(current=Depends(require_admin)):
-    _delete_branding_asset("favicon", "favicon_ext")
-    return {"ok": True}
-
-@app.post("/auth/setup")
-def setup(body: SetupRequest, request: Request):
-    """Creates the first admin account. Locked out once any user exists."""
-    key = f"setup:{rate_limit.get_client_ip(request)}"
-    rate_limit.check_rate_limit(key)
-    with get_conn() as conn:
-        if any_users_exist(conn):
-            raise HTTPException(status_code=409, detail="Setup already completed")
-        if len(body.password) < 8:
-            rate_limit.record_failure(key)
-            raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
-        cur = conn.execute(
-            "INSERT INTO users (username, password_hash, is_admin) VALUES (?, ?, 1)",
-            (body.username, hash_password(body.password)),
-        )
-        user = row_to_dict(conn.execute("SELECT * FROM users WHERE id = ?", (cur.lastrowid,)).fetchone())
-
-    rate_limit.record_success(key)
-    token = issue_token(user)
-    return {"token": token, "user": {"id": user["id"], "username": user["username"], "is_admin": True}}
-
-
-# ---------------------------------------------------------------------------
-# Login
-# ---------------------------------------------------------------------------
-
-def _log_login_attempt(user_id, username: str, ip: str, success: bool, method: str):
-    with get_conn() as conn:
-        conn.execute(
-            "INSERT INTO login_history (user_id, username, ip_address, success, method) VALUES (?, ?, ?, ?, ?)",
-            (user_id, username, ip, int(success), method),
-        )
-        if success and user_id:
-            conn.execute(
-                "UPDATE users SET last_login_at = CURRENT_TIMESTAMP, last_login_ip = ? WHERE id = ?",
-                (ip, user_id),
-            )
-        # opportunistic cleanup — keeps the table from growing unbounded
-        # on a long-running instance without needing a scheduled job
-        conn.execute("DELETE FROM login_history WHERE created_at < datetime('now', '-90 days')")
-
-@app.post("/auth/login")
-def login(body: LoginRequest, request: Request):
-    ip = rate_limit.get_client_ip(request)
-    key = f"login:{ip}:{body.username.lower()}"
-    rate_limit.check_rate_limit(key)
-
-    try:
-        user = authenticate_local(body.username, body.password)
-    except ValueError as e:
-        rate_limit.record_failure(key)
-        _log_login_attempt(None, body.username, ip, success=False, method="local")
-        raise HTTPException(status_code=401, detail=str(e))
-
-    rate_limit.record_success(key)
-    _log_login_attempt(user["id"], user["username"], ip, success=True, method="local")
-    token = issue_token(user)
-    return {
-        "token": token,
-        "user": {"id": user["id"], "username": user["username"], "is_admin": bool(user["is_admin"])},
-    }
-
-
-@app.post("/auth/jellyfin/login")
-def jellyfin_login(body: LoginRequest, request: Request):
-    ip = rate_limit.get_client_ip(request)
-    key = f"jellyfin-login:{ip}:{body.username.lower()}"
-    rate_limit.check_rate_limit(key)
-
-    try:
-        jf_user = authenticate_with_jellyfin(body.username, body.password)
-    except ValueError:
-        rate_limit.record_failure(key)
-        _log_login_attempt(None, body.username, ip, success=False, method="jellyfin")
-        raise HTTPException(status_code=401, detail="Invalid Jellyfin credentials")
-    except RuntimeError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-    user = get_or_create_jellyfin_linked_user(jf_user)
-    rate_limit.record_success(key)
-    _log_login_attempt(user["id"], user["username"], ip, success=True, method="jellyfin")
-    token = issue_token(user)
-    return {
-        "token": token,
-        "user": {"id": user["id"], "username": user["username"], "is_admin": bool(user["is_admin"])},
-    }
-
-
-# ---------------------------------------------------------------------------
-# Invite / password reset (token-based, no auth required)
-# ---------------------------------------------------------------------------
-
-@app.post("/auth/forgot-password")
-def forgot_password(body: ForgotPasswordRequest, request: Request):
-    """Always returns the same generic response whether or not the email
-    matches an account — an attacker probing for valid emails shouldn't
-    be able to tell the difference."""
-    email = body.email.strip()
-    key = f"forgot-password:{rate_limit.get_client_ip(request)}:{email.lower()}"
-    rate_limit.check_rate_limit(key)
-    rate_limit.record_failure(key)  # always counts as an "attempt", success or not — see docstring above
-
-    if email:
-        with get_conn() as conn:
-            user = conn.execute("SELECT id, username FROM users WHERE email = ?", (email,)).fetchone()
-            if user and get_setting(conn, "smtp_enabled") == "1":
-                token = auth.create_auth_token(conn, user["id"], "reset", ttl_hours=1)
-                site_name = get_setting(conn, "site_name") or "uLearn"
-                site_url = (get_setting(conn, "site_url") or "").rstrip("/")
-                template = get_setting(conn, "template_password_reset") or ""
-                link = f"{site_url}/set-password/{token}" if site_url else f"/set-password/{token}"
-                body_text = mailer.render_template(template, {"username": user["username"], "site_name": site_name, "link": link})
-                mailer.send_email(email, f"Reset your {site_name} password", body_text)
-    return {"ok": True, "message": "If that email is registered, a reset link has been sent."}
-
-
-@app.get("/auth/token/{token}")
-def check_auth_token(token: str):
-    with get_conn() as conn:
-        resolved = auth.resolve_auth_token(conn, token)
-    if not resolved:
-        raise HTTPException(status_code=400, detail="This link is invalid or has expired")
-    return {"valid": True, "kind": resolved["kind"], "username": resolved["username"]}
-
-@app.post("/auth/token/{token}")
-def set_password_via_token(token: str, body: SetPasswordRequest):
-    if len(body.password) < 8:
-        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
-    with get_conn() as conn:
-        resolved = auth.resolve_auth_token(conn, token)
-        if not resolved:
-            raise HTTPException(status_code=400, detail="This link is invalid or has expired")
-        conn.execute("UPDATE users SET password_hash = ? WHERE id = ?", (hash_password(body.password), resolved["user_id"]))
-        auth.consume_auth_token(conn, token)
-        user = conn.execute("SELECT id, username, is_admin FROM users WHERE id = ?", (resolved["user_id"],)).fetchone()
-
-    jwt_token = issue_token(dict(user))
-    return {
-        "token": jwt_token,
-        "user": {"id": user["id"], "username": user["username"], "is_admin": bool(user["is_admin"])},
-    }
-
+    except Exception as error:
+        raise HTTPException(status_code=503, detail=f"Database check failed: {error}")
 
 # ---------------------------------------------------------------------------
 # Courses

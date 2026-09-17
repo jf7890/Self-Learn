@@ -18,26 +18,41 @@ Keyed by (IP, identifier) rather than IP alone or identifier alone:
     identifier, closing that griefing vector.
 """
 
+import ipaddress
+import os
 import time
 from collections import defaultdict
 from fastapi import Request, HTTPException
 
 WINDOW_SECONDS = 15 * 60  # 15 minutes
 MAX_ATTEMPTS = 5
+MAX_IP_ATTEMPTS = 25
 
 _attempts = defaultdict(list)  # key -> [timestamps of failures]
 
 
+def _trusted_proxies() -> set[str]:
+    configured = os.environ.get("TRUSTED_PROXIES", "127.0.0.1,::1")
+    return {value.strip() for value in configured.split(",") if value.strip()}
+
+
+def _valid_ip(value: str) -> bool:
+    try:
+        ipaddress.ip_address(value)
+        return True
+    except ValueError:
+        return False
+
+
 def get_client_ip(request: Request) -> str:
-    """uLearn always runs behind a reverse proxy in production, so the
-    real client IP arrives via X-Forwarded-For, not request.client —
-    trusting request.client alone would bucket every real user under the
-    proxy's single IP, making rate limiting either useless (shared
-    budget) or actively harmful (one bad actor locks out everyone)."""
+    """Trust forwarded client addresses only from configured reverse proxies."""
+    peer = request.client.host if request.client else "unknown"
     forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
+    if forwarded and peer in _trusted_proxies():
+        candidate = forwarded.split(",")[0].strip()
+        if _valid_ip(candidate):
+            return candidate
+    return peer
 
 
 def _prune(key: str) -> list:
@@ -47,9 +62,9 @@ def _prune(key: str) -> list:
     return attempts
 
 
-def check_rate_limit(key: str):
+def check_rate_limit(key: str, max_attempts: int = MAX_ATTEMPTS):
     attempts = _prune(key)
-    if len(attempts) >= MAX_ATTEMPTS:
+    if len(attempts) >= max_attempts:
         retry_after = int(WINDOW_SECONDS - (time.time() - attempts[0]))
         minutes = max(1, (retry_after + 59) // 60)
         raise HTTPException(
