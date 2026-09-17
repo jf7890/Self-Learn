@@ -20,8 +20,6 @@ import tempfile
 import io
 import uuid
 import imghdr
-from html.parser import HTMLParser
-from html import escape
 from datetime import date, timedelta, datetime
 from fastapi import FastAPI, Depends, HTTPException, Request, UploadFile, File
 from fastapi.responses import StreamingResponse, FileResponse, Response
@@ -44,6 +42,15 @@ import notifications
 import mailer
 import auth
 import rate_limit
+from access.policies import (
+    can_access_course,
+    course_id_for_lesson,
+    require_course_access,
+    require_lesson_access,
+    safe_course_path,
+)
+from services.note_sanitizer import sanitize_note_html
+from services.ranges import RANGE_WINDOW_BYTES, parse_single_range
 
 app = FastAPI(title="uLearn API")
 
@@ -57,51 +64,6 @@ MAX_LOGO_BYTES = 2 * 1024 * 1024  # 2MB
 DATA_DIR = os.path.dirname(os.environ.get("ULEARN_DB", "/data/ulearn.db"))
 NOTE_IMAGES_DIR = os.path.join(DATA_DIR, "note-images")
 MAX_NOTE_IMAGE_BYTES = 8 * 1024 * 1024
-
-class _NoteSanitizer(HTMLParser):
-    """Small allow-list sanitizer for contenteditable notes."""
-    allowed = {"p", "div", "br", "strong", "b", "em", "i", "u", "s", "ul", "ol", "li", "blockquote", "pre", "code", "h1", "h2", "h3", "a", "img", "span", "table", "thead", "tbody", "tr", "th", "td"}
-    void = {"br", "img"}
-    def __init__(self):
-        super().__init__(convert_charrefs=True)
-        self.out = []
-    def handle_starttag(self, tag, attrs):
-        if tag not in self.allowed: return
-        clean = []
-        attrs = dict(attrs)
-        if tag == "a" and attrs.get("href", "").startswith(("http://", "https://")):
-            clean = [("href", attrs["href"]), ("target", "_blank"), ("rel", "noopener noreferrer")]
-        elif tag == "img":
-            src = attrs.get("src", "")
-            if re.fullmatch(r"/api/notes/images/[a-f0-9-]+\.(?:png|jpe?g|webp|gif)", src):
-                width = attrs.get("data-width", "100")
-                align = attrs.get("data-align", "left")
-                caption = attrs.get("data-caption", "").strip()[:500]
-                if width not in {"25", "50", "75", "100"}: width = "100"
-                if align not in {"left", "center", "right"}: align = "left"
-                clean = [("src", src), ("data-width", width), ("data-align", align)]
-                if caption: clean.append(("data-caption", caption))
-            else: return
-        elif tag in {"p", "h1", "h2", "h3"}:
-            align = attrs.get("style", "")
-            align_match = re.search(r"text-align:\s*(left|center|right|justify)", align)
-            indent = attrs.get("data-indent", "0")
-            if indent not in {"1", "2", "3", "4", "5", "6"}: indent = "0"
-            if align_match: clean.append(("style", f"text-align:{align_match.group(1)}"))
-            if indent != "0": clean.append(("data-indent", indent))
-        elif tag == "span":
-            match = re.search(r"font-size:\s*(12|15|18|24)px", attrs.get("style", ""))
-            if match: clean = [("style", f"font-size:{match.group(1)}px")]
-        self.out.append("<" + tag + "".join(f' {k}="{escape(v, quote=True)}"' for k,v in clean) + ">")
-    def handle_endtag(self, tag):
-        if tag in self.allowed and tag not in self.void: self.out.append(f"</{tag}>")
-    def handle_data(self, data): self.out.append(escape(data))
-
-def sanitize_note_html(value: str) -> str:
-    if len(value.encode("utf-8")) > 250_000:
-        raise HTTPException(status_code=400, detail="Note is too large")
-    parser = _NoteSanitizer(); parser.feed(value); parser.close()
-    return "".join(parser.out)
 
 
 def _asset_path(kind: str, ext: str) -> str:
@@ -444,39 +406,15 @@ def set_password_via_token(token: str, body: SetPasswordRequest):
 # Courses
 # ---------------------------------------------------------------------------
 
-def _can_access_course(conn, current: dict, course_id: int) -> bool:
-    if bool(current.get("is_admin")):
-        return conn.execute("SELECT 1 FROM courses WHERE id = ?", (course_id,)).fetchone() is not None
-    return conn.execute(
-        "SELECT 1 FROM course_access WHERE user_id = ? AND course_id = ?",
-        (int(current["sub"]), course_id),
-    ).fetchone() is not None
-
-def _require_course_access(conn, current: dict, course_id: int):
-    # Deliberately return 404 so an unauthorized user cannot enumerate IDs.
-    if not _can_access_course(conn, current, course_id):
-        raise HTTPException(status_code=404, detail="Course not found")
-
-def _course_id_for_lesson(conn, lesson_id: int):
-    row = conn.execute(
-        "SELECT s.course_id FROM lessons l JOIN sections s ON s.id = l.section_id WHERE l.id = ?",
-        (lesson_id,),
-    ).fetchone()
-    return row["course_id"] if row else None
-
-def _require_lesson_access(conn, current: dict, lesson_id: int):
-    course_id = _course_id_for_lesson(conn, lesson_id)
-    if course_id is None:
-        raise HTTPException(status_code=404, detail="Lesson not found")
-    _require_course_access(conn, current, course_id)
-    return course_id
+# Compatibility aliases keep endpoint code stable while policy logic lives in
+# one independently testable module.
+_can_access_course = can_access_course
+_require_course_access = require_course_access
+_course_id_for_lesson = course_id_for_lesson
+_require_lesson_access = require_lesson_access
 
 def _safe_course_path(relative_path: str) -> str:
-    root = os.path.realpath(COURSES_ROOT)
-    candidate = os.path.realpath(os.path.join(root, relative_path))
-    if os.path.commonpath((root, candidate)) != root:
-        raise HTTPException(status_code=404, detail="File not found")
-    return candidate
+    return safe_course_path(COURSES_ROOT, relative_path)
 
 def _course_with_stats(conn, course, user_id: int) -> dict:
     total = conn.execute(
@@ -653,7 +591,6 @@ def serve_note_image(name: str, current=Depends(get_current_user)):
 # ---------------------------------------------------------------------------
 
 CHUNK_SIZE = 1024 * 1024  # 1MB read chunks
-RANGE_WINDOW_BYTES = 8 * 1024 * 1024  # balance ahead-buffering with reliable Vite/Cloudflare responses
 
 def _range_not_satisfiable(file_size: int):
     return Response(status_code=416, headers={
@@ -661,29 +598,7 @@ def _range_not_satisfiable(file_size: int):
         "Accept-Ranges": "bytes",
     })
 
-def _parse_single_range(value: str, file_size: int):
-    # RFC 7233 single byte range only. Browsers do not need multipart ranges.
-    match = re.fullmatch(r"bytes=(\d*)-(\d*)", value.strip())
-    if not match or file_size <= 0:
-        return None
-    first, last = match.groups()
-    if not first and not last:
-        return None
-    if len(first) > 20 or len(last) > 20:
-        return None
-    if not first:  # suffix range: bytes=-500
-        suffix = int(last)
-        if suffix <= 0:
-            return None
-        start = max(0, file_size - suffix)
-        return start, file_size - 1
-    start = int(first)
-    if start >= file_size:
-        return None
-    end = int(last) if last else min(start + RANGE_WINDOW_BYTES - 1, file_size - 1)
-    if end < start:
-        return None
-    return start, min(end, file_size - 1)
+_parse_single_range = parse_single_range
 
 @app.api_route("/media/{lesson_id}", methods=["GET", "HEAD"])
 def stream_media(lesson_id: int, request: Request, current=Depends(get_current_user)):
