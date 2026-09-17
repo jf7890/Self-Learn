@@ -1,17 +1,9 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { api } from "../api";
 import { IconPlay, IconPause, IconFullscreen, IconVolume, IconVolumeMuted, IconReplay10, IconForward10 } from "../icons.jsx";
-
-const SPEEDS = [1, 1.25, 1.5, 2];
-
-function formatTime(sec) {
-  if (!isFinite(sec) || sec < 0) return "0:00";
-  const total = Math.floor(sec);
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  const s = (total % 60).toString().padStart(2, "0");
-  return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${s}` : `${m}:${s}`;
-}
+import PlayerTimeline from "../features/player/PlayerTimeline.jsx";
+import { findNextLesson, formatPlaybackTime, PLAYBACK_SPEEDS } from "../features/player/playerUtils.js";
+import { usePersistedAudio } from "../features/player/usePersistedAudio.js";
 
 /**
  * lesson: current lesson object (id, title, position_seconds, ...)
@@ -27,8 +19,7 @@ export default function VideoPlayer({ lesson, lessons, onNext, onProgress }) {
   const [current, setCurrent] = useState(0);
   const [duration, setDuration] = useState(0);
   const [speed, setSpeed] = useState(1);
-  const [volume, setVolume] = useState(() => Number(localStorage.getItem("ct_volume") ?? 1));
-  const [muted, setMuted] = useState(() => localStorage.getItem("ct_muted") === "1");
+  const { volume, muted, changeVolume, toggleMute } = usePersistedAudio(videoRef, lesson.id);
   const [showSpeedMenu, setShowSpeedMenu] = useState(false);
   const [showControls, setShowControls] = useState(true);
   const [nextPrompt, setNextPrompt] = useState(false);
@@ -79,11 +70,7 @@ export default function VideoPlayer({ lesson, lessons, onNext, onProgress }) {
     }
   }, [activeTrackId]);
 
-  const nextLesson = (() => {
-    if (!lessons) return null;
-    const idx = lessons.findIndex((l) => l.id === lesson.id);
-    return idx >= 0 && idx < lessons.length - 1 ? lessons[idx + 1] : null;
-  })();
+  const nextLesson = findNextLesson(lessons, lesson.id);
 
   // Resume from stored position when lesson changes
   useEffect(() => {
@@ -167,19 +154,6 @@ export default function VideoPlayer({ lesson, lessons, onNext, onProgress }) {
     setShowControls(true);
   }, []);
 
-  const changeVolume = (value) => {
-    const next = Number(value);
-    setVolume(next); localStorage.setItem("ct_volume", String(next));
-    if (videoRef.current) videoRef.current.volume = next;
-    if (next > 0 && muted) { setMuted(false); localStorage.setItem("ct_muted", "0"); }
-  };
-
-  const toggleMute = () => {
-    const next = !muted;
-    setMuted(next); localStorage.setItem("ct_muted", next ? "1" : "0");
-    if (videoRef.current) videoRef.current.muted = next;
-  };
-
   const seekTo = (fraction) => {
     const v = videoRef.current;
     if (!v || !duration) return;
@@ -216,13 +190,6 @@ export default function VideoPlayer({ lesson, lessons, onNext, onProgress }) {
       if (playing) setShowControls(false);
     }, 2800);
   }, [playing]);
-
-  useEffect(() => {
-    const v = videoRef.current;
-    if (!v) return;
-    v.volume = Math.max(0, Math.min(1, volume));
-    v.muted = muted;
-  }, [lesson.id]);
 
   useEffect(() => {
     const onKeyDown = (e) => {
@@ -289,17 +256,14 @@ export default function VideoPlayer({ lesson, lessons, onNext, onProgress }) {
       )}
 
       <div className={`ct-controls ${showControls ? "visible" : ""}`}>
-        <div
-          className="ct-scrubber"
-          ref={progressBarRef}
+        <PlayerTimeline
+          barRef={progressBarRef}
+          current={current}
+          duration={duration}
+          bufferedEnd={bufferedEnd}
           onClick={handleBarClick}
-          onTouchStart={handleBarTouch}
-          onTouchMove={handleBarTouch}
-        >
-          <div className="ct-scrubber-buffer" style={{ width: `${(bufferedEnd / duration || 0) * 100}%` }} />
-          <div className="ct-scrubber-fill" style={{ width: `${(current / duration || 0) * 100}%` }} />
-          <div className="ct-scrubber-handle" style={{ left: `${(current / duration || 0) * 100}%` }} />
-        </div>
+          onTouch={handleBarTouch}
+        />
 
         <div className="ct-controls-row">
           <button className="ct-icon-btn" onClick={togglePlay} aria-label={playing ? "Pause" : "Play"}>
@@ -312,7 +276,7 @@ export default function VideoPlayer({ lesson, lessons, onNext, onProgress }) {
             <input type="range" min="0" max="1" step="0.05" value={muted ? 0 : volume} onChange={(e) => changeVolume(e.target.value)} aria-label="Volume" />
           </div>
 
-          <span className="ct-time">{formatTime(current)} / {formatTime(duration)}</span>
+          <span className="ct-time">{formatPlaybackTime(current)} / {formatPlaybackTime(duration)}</span>
 
           <div className="ct-spacer" />
 
@@ -344,7 +308,7 @@ export default function VideoPlayer({ lesson, lessons, onNext, onProgress }) {
             </button>
             {showSpeedMenu && (
               <div className="ct-speed-menu">
-                {SPEEDS.map((s) => (
+                {PLAYBACK_SPEEDS.map((s) => (
                   <button key={s} className={s === speed ? "active" : ""} onClick={() => changeSpeed(s)}>
                     {s}x
                   </button>
