@@ -8,6 +8,7 @@ os.environ["SECRET_KEY"] = "test-only-secret-key-that-is-long-enough"
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "server"))
 import db
 import main
+from routers.media import srt_to_vtt
 
 class SecurityHelpersTest(unittest.TestCase):
     def test_ranges(self):
@@ -19,6 +20,10 @@ class SecurityHelpersTest(unittest.TestCase):
         self.assertIsNone(main._parse_single_range("bytes=20-10", 1000))
         self.assertIsNone(main._parse_single_range("bytes=0-1,4-5", 1000))
         self.assertIsNone(main._parse_single_range("bytes=" + "9" * 100 + "-", 1000))
+
+    def test_srt_to_vtt(self):
+        source = "1\n00:00:01,250 --> 00:00:03,500\nHello\n"
+        self.assertEqual(srt_to_vtt(source), "WEBVTT\n\n1\n00:00:01.250 --> 00:00:03.500\nHello\n")
 
     def test_acl_admin_and_member(self):
         db.init_db()

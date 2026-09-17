@@ -12,14 +12,10 @@ Endpoints:
 """
 
 import os
-import mimetypes
-import re
 import sqlite3
 import zipfile
 import tempfile
 import io
-import uuid
-import imghdr
 from datetime import datetime
 from fastapi import FastAPI, Depends, HTTPException, Request, UploadFile, File
 from fastapi.responses import StreamingResponse, FileResponse, Response
@@ -47,17 +43,17 @@ from access.policies import (
     require_lesson_access,
     safe_course_path,
 )
-from services.note_sanitizer import sanitize_note_html
-from services.ranges import RANGE_WINDOW_BYTES, parse_single_range
 from routers.comments import router as comments_router
 from routers.progress import router as progress_router
+from routers.notes import router as notes_router
+from routers.media import router as media_router
+from services.ranges import RANGE_WINDOW_BYTES, parse_single_range
 from schemas import (
     BrandingUpdate,
     SetupRequest,
     LoginRequest,
     ForgotPasswordRequest,
     SetPasswordRequest,
-    NoteUpdate,
     DurationUpdate,
     CreateMemberRequest,
     ResetPasswordRequest,
@@ -73,6 +69,11 @@ from schemas import (
 app = FastAPI(title="uLearn API")
 app.include_router(progress_router)
 app.include_router(comments_router)
+app.include_router(notes_router)
+app.include_router(media_router)
+
+# Compatibility alias retained for existing helper tests and callers.
+_parse_single_range = parse_single_range
 
 BRANDING_DIR = os.path.join(os.path.dirname(os.environ.get("ULEARN_DB", "/data/ulearn.db")), "branding")
 ALLOWED_LOGO_TYPES = {"image/png": "png", "image/jpeg": "jpg", "image/svg+xml": "svg", "image/webp": "webp"}
@@ -81,9 +82,6 @@ ALLOWED_FAVICON_TYPES = {
     "image/x-icon": "ico", "image/vnd.microsoft.icon": "ico",
 }
 MAX_LOGO_BYTES = 2 * 1024 * 1024  # 2MB
-DATA_DIR = os.path.dirname(os.environ.get("ULEARN_DB", "/data/ulearn.db"))
-NOTE_IMAGES_DIR = os.path.join(DATA_DIR, "note-images")
-MAX_NOTE_IMAGE_BYTES = 8 * 1024 * 1024
 
 
 def _asset_path(kind: str, ext: str) -> str:
@@ -510,181 +508,6 @@ def get_course(course_id: int, current=Depends(get_current_user)):
         result["sections"] = section_list
         result["attachments"] = [row_to_dict(a) for a in course_attachments]
         return result
-
-
-# ---------------------------------------------------------------------------
-# Private study notes
-# ---------------------------------------------------------------------------
-
-
-@app.get("/lessons/{lesson_id}/note")
-def get_lesson_note(lesson_id: int, current=Depends(get_current_user)):
-    user_id = int(current["sub"])
-    with get_conn() as conn:
-        _require_lesson_access(conn, current, lesson_id)
-        row = conn.execute("SELECT content_html, updated_at FROM lesson_notes WHERE user_id = ? AND lesson_id = ?", (user_id, lesson_id)).fetchone()
-    return row_to_dict(row) if row else {"content_html": "", "updated_at": None}
-
-@app.put("/lessons/{lesson_id}/note")
-def save_lesson_note(lesson_id: int, body: NoteUpdate, current=Depends(get_current_user)):
-    user_id = int(current["sub"])
-    clean = sanitize_note_html(body.content_html)
-    with get_conn() as conn:
-        _require_lesson_access(conn, current, lesson_id)
-        conn.execute("INSERT INTO lesson_notes(user_id, lesson_id, content_html, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(user_id, lesson_id) DO UPDATE SET content_html=excluded.content_html, updated_at=CURRENT_TIMESTAMP", (user_id, lesson_id, clean))
-        row = conn.execute("SELECT content_html, updated_at FROM lesson_notes WHERE user_id = ? AND lesson_id = ?", (user_id, lesson_id)).fetchone()
-    return row_to_dict(row)
-
-@app.post("/lessons/{lesson_id}/note-images")
-async def upload_note_image(lesson_id: int, file: UploadFile = File(...), current=Depends(get_current_user)):
-    user_id = int(current["sub"])
-    with get_conn() as conn:
-        _require_lesson_access(conn, current, lesson_id)
-    data = await file.read(MAX_NOTE_IMAGE_BYTES + 1)
-    if not data or len(data) > MAX_NOTE_IMAGE_BYTES:
-        raise HTTPException(status_code=400, detail="Image must be between 1 byte and 8 MB")
-    detected = imghdr.what(None, data)
-    ext = {"jpeg": "jpg", "png": "png", "webp": "webp", "gif": "gif"}.get(detected)
-    if not ext:
-        raise HTTPException(status_code=400, detail="Only PNG, JPEG, WebP and GIF images are allowed")
-    user_dir = os.path.join(NOTE_IMAGES_DIR, str(user_id))
-    os.makedirs(user_dir, exist_ok=True)
-    name = f"{uuid.uuid4()}.{ext}"
-    with open(os.path.join(user_dir, name), "wb") as out:
-        out.write(data)
-    with get_conn() as conn:
-        conn.execute("INSERT INTO note_images(name, user_id, lesson_id) VALUES (?, ?, ?)", (name, user_id, lesson_id))
-    return {"url": f"/api/notes/images/{name}"}
-
-@app.get("/notes/images/{name}")
-def serve_note_image(name: str, current=Depends(get_current_user)):
-    if not re.fullmatch(r"[a-f0-9-]+\.(?:png|jpe?g|webp|gif)", name):
-        raise HTTPException(status_code=404, detail="Image not found")
-    user_id = int(current["sub"])
-    path = os.path.join(NOTE_IMAGES_DIR, str(user_id), name)
-    if not os.path.isfile(path):
-        raise HTTPException(status_code=404, detail="Image not found")
-    with get_conn() as conn:
-        reference = f"/api/notes/images/{name}"
-        row = conn.execute(
-            "SELECT s.course_id FROM note_images i JOIN lessons l ON l.id=i.lesson_id "
-            "JOIN sections s ON s.id=l.section_id WHERE i.user_id=? AND i.name=? "
-            "UNION SELECT s.course_id FROM lesson_notes n JOIN lessons l ON l.id=n.lesson_id "
-            "JOIN sections s ON s.id=l.section_id WHERE n.user_id=? AND instr(n.content_html, ?) > 0 LIMIT 1",
-            (user_id, name, user_id, reference),
-        ).fetchone()
-        if not row or not _can_access_course(conn, current, row["course_id"]):
-            raise HTTPException(status_code=404, detail="Image not found")
-    return FileResponse(path, headers={"Cache-Control": "private, max-age=3600", "X-Content-Type-Options": "nosniff"})
-
-# ---------------------------------------------------------------------------
-# Media streaming (range-request aware — required for video seek to work)
-# ---------------------------------------------------------------------------
-
-CHUNK_SIZE = 1024 * 1024  # 1MB read chunks
-
-def _range_not_satisfiable(file_size: int):
-    return Response(status_code=416, headers={
-        "Content-Range": f"bytes */{file_size}",
-        "Accept-Ranges": "bytes",
-    })
-
-_parse_single_range = parse_single_range
-
-@app.api_route("/media/{lesson_id}", methods=["GET", "HEAD"])
-def stream_media(lesson_id: int, request: Request, current=Depends(get_current_user)):
-    with get_conn() as conn:
-        lesson = conn.execute("SELECT * FROM lessons WHERE id = ?", (lesson_id,)).fetchone()
-        if not lesson:
-            raise HTTPException(status_code=404, detail="Lesson not found")
-        _require_lesson_access(conn, current, lesson_id)
-
-    file_path = _safe_course_path(lesson["relative_path"])
-    if not os.path.isfile(file_path):
-        raise HTTPException(status_code=404, detail="File missing on disk")
-
-    file_size = os.path.getsize(file_path)
-    content_type = mimetypes.guess_type(file_path)[0] or "application/octet-stream"
-    common = {"Accept-Ranges": "bytes", "Cache-Control": "private, max-age=3600"}
-    range_header = request.headers.get("range")
-    if not range_header:
-        if request.method == "HEAD":
-            return Response(status_code=200, media_type=content_type, headers={**common, "Content-Length": str(file_size)})
-        return FileResponse(file_path, media_type=content_type, headers=common)
-
-    byte_range = _parse_single_range(range_header, file_size)
-    if byte_range is None:
-        return _range_not_satisfiable(file_size)
-    start, end = byte_range
-    length = end - start + 1
-    headers = {**common, "Content-Range": f"bytes {start}-{end}/{file_size}", "Content-Length": str(length)}
-    if request.method == "HEAD":
-        return Response(status_code=206, media_type=content_type, headers=headers)
-
-    def iter_chunk():
-        with open(file_path, "rb") as f:
-            f.seek(start)
-            remaining = length
-            while remaining > 0:
-                chunk = f.read(min(CHUNK_SIZE, remaining))
-                if not chunk:
-                    break
-                remaining -= len(chunk)
-                yield chunk
-    return StreamingResponse(iter_chunk(), status_code=206, media_type=content_type, headers=headers)
-
-@app.get("/attachments/{attachment_id}")
-def download_attachment(attachment_id: int, current=Depends(get_current_user)):
-    with get_conn() as conn:
-        att = conn.execute("SELECT * FROM attachments WHERE id = ?", (attachment_id,)).fetchone()
-        if att:
-            _require_course_access(conn, current, att["course_id"])
-    if not att:
-        raise HTTPException(status_code=404, detail="Attachment not found")
-    file_path = _safe_course_path(att["relative_path"])
-    if not os.path.isfile(file_path):
-        raise HTTPException(status_code=404, detail="File missing on disk")
-    return FileResponse(file_path, filename=att["file_name"])
-
-
-SRT_TIMESTAMP_RE = re.compile(r"(\d{2}:\d{2}:\d{2}),(\d{3})")
-
-
-def _srt_to_vtt(srt_text: str) -> str:
-    """Converts SRT subtitle text to WebVTT — the format browsers actually
-    support natively via <track>, unlike raw SRT. For standard SRT the
-    only real differences are the timestamp decimal separator (comma vs
-    period) and the required WEBVTT header line."""
-    body = SRT_TIMESTAMP_RE.sub(r"\1.\2", srt_text)
-    return "WEBVTT\n\n" + body.strip() + "\n"
-
-
-@app.get("/subtitles/{subtitle_id}")
-def get_subtitle(subtitle_id: int, current=Depends(get_current_user)):
-    """Always returns WebVTT regardless of the source format on disk (SRT
-    is converted on the fly), since that's the only subtitle format
-    browsers support in a <track> element."""
-    with get_conn() as conn:
-        sub = conn.execute("SELECT * FROM subtitles WHERE id = ?", (subtitle_id,)).fetchone()
-        if sub:
-            _require_lesson_access(conn, current, sub["lesson_id"])
-    if not sub:
-        raise HTTPException(status_code=404, detail="Subtitle not found")
-    file_path = _safe_course_path(sub["relative_path"])
-    if not os.path.isfile(file_path):
-        raise HTTPException(status_code=404, detail="Subtitle file missing on disk")
-
-    # utf-8-sig transparently strips a BOM if present — common in
-    # subtitle files exported from Windows-based tools.
-    with open(file_path, "r", encoding="utf-8-sig", errors="replace") as f:
-        raw_text = f.read()
-
-    if file_path.lower().endswith(".vtt"):
-        vtt_text = raw_text if raw_text.strip().upper().startswith("WEBVTT") else "WEBVTT\n\n" + raw_text
-    else:
-        vtt_text = _srt_to_vtt(raw_text)
-
-    return Response(content=vtt_text, media_type="text/vtt")
 
 
 # ---------------------------------------------------------------------------
