@@ -68,6 +68,13 @@ def stream_media(
 ):
     if not session_token:
         raise HTTPException(status_code=401, detail="Session cookie required")
+    # Modern browsers identify requests made by a <video> element. Opening the
+    # ticket in a tab changes the destination to "document"; downloads use a
+    # non-video destination. Reject both while preserving native Range/seek.
+    fetch_dest = request.headers.get("sec-fetch-dest", "").lower()
+    fetch_site = request.headers.get("sec-fetch-site", "").lower()
+    if fetch_dest != "video" or fetch_site not in {"same-origin", "same-site"}:
+        raise HTTPException(status_code=403, detail="Playback URL is only valid inside the course player")
     record = validate_playback_ticket(ticket, current["sub"], session_token)
     if not record:
         raise HTTPException(status_code=403, detail="Playback link expired or invalid")
