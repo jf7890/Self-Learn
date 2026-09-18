@@ -31,6 +31,10 @@ export default function VideoPlayer({ lesson, lessons, onNext, onProgress }) {
   const controlsTimeout = useRef(null);
   const durationReportedRef = useRef(false);
   const autoCompletedRef = useRef(false);
+  const ticketIssuedAtRef = useRef(0);
+  const ticketRenewingRef = useRef(false);
+  const pendingResumeRef = useRef(null);
+  const ticketRecoveryTriedRef = useRef(false);
 
   const hasSubtitles = lesson.subtitles && lesson.subtitles.length > 0;
   const [showCcMenu, setShowCcMenu] = useState(false);
@@ -73,17 +77,33 @@ export default function VideoPlayer({ lesson, lessons, onNext, onProgress }) {
 
   const nextLesson = findNextLesson(lessons, lesson.id);
 
+  const renewPlaybackTicket = useCallback(async ({ resumeAt = 0, autoplay = false } = {}) => {
+    if (ticketRenewingRef.current) return;
+    ticketRenewingRef.current = true;
+    pendingResumeRef.current = { resumeAt, autoplay };
+    setBuffering(true);
+    setMediaError("");
+    try {
+      const result = await api.createMediaTicket(lesson.id);
+      ticketIssuedAtRef.current = Date.now();
+      setMediaUrl(result.url);
+    } catch {
+      pendingResumeRef.current = null;
+      setBuffering(false);
+      setMediaError("Video could not be authorized. Sign in again and retry.");
+    } finally {
+      ticketRenewingRef.current = false;
+    }
+  }, [lesson.id]);
+
   // Request a short-lived, session-bound playback URL. The opaque URL seen in
   // DevTools contains no lesson id and is useless outside this browser session.
   useEffect(() => {
-    let cancelled = false;
     setMediaUrl("");
     setMediaError("");
-    api.createMediaTicket(lesson.id)
-      .then((result) => { if (!cancelled) setMediaUrl(result.url); })
-      .catch(() => { if (!cancelled) setMediaError("Video could not be authorized. Sign in again and retry."); });
-    return () => { cancelled = true; };
-  }, [lesson.id]);
+    ticketRecoveryTriedRef.current = false;
+    renewPlaybackTicket();
+  }, [lesson.id, renewPlaybackTicket]);
 
   // Resume from stored position when lesson changes
   useEffect(() => {
@@ -129,6 +149,28 @@ export default function VideoPlayer({ lesson, lessons, onNext, onProgress }) {
     }
   };
 
+  const handleLoadedMetadata = () => {
+    const v = videoRef.current;
+    const pending = pendingResumeRef.current;
+    if (!v || !pending) return;
+    if (pending.resumeAt > 0 && pending.resumeAt < v.duration) v.currentTime = pending.resumeAt;
+    v.playbackRate = speed;
+    pendingResumeRef.current = null;
+    ticketRecoveryTriedRef.current = false;
+    if (pending.autoplay) v.play().catch(() => {});
+  };
+
+  const handleMediaError = () => {
+    const v = videoRef.current;
+    setBuffering(false);
+    if (v && !ticketRecoveryTriedRef.current) {
+      ticketRecoveryTriedRef.current = true;
+      renewPlaybackTicket({ resumeAt: v.currentTime || current, autoplay: true });
+      return;
+    }
+    setMediaError("Video could not be loaded. Check your connection and try again.");
+  };
+
   const handleDurationChange = (e) => {
     const d = e.target.duration;
     setDuration(d);
@@ -157,7 +199,15 @@ export default function VideoPlayer({ lesson, lessons, onNext, onProgress }) {
   const togglePlay = () => {
     const v = videoRef.current;
     if (!v) return;
-    if (v.paused) v.play(); else v.pause();
+    if (v.paused) {
+      // Renew proactively after a long pause so the first resumed Range request
+      // never hits an expired idle ticket.
+      if (Date.now() - ticketIssuedAtRef.current > 14 * 60 * 1000) {
+        renewPlaybackTicket({ resumeAt: v.currentTime || current, autoplay: true });
+      } else {
+        v.play().catch(() => handleMediaError());
+      }
+    } else v.pause();
   };
 
   const skip = useCallback((seconds) => {
@@ -232,8 +282,9 @@ export default function VideoPlayer({ lesson, lessons, onNext, onProgress }) {
         onStalled={() => setBuffering(true)}
         onCanPlay={() => setBuffering(false)}
         onProgress={updateBuffered}
-        onError={() => { setBuffering(false); setMediaError("Video could not be loaded. Check your connection and try again."); }}
+        onError={handleMediaError}
         onPause={() => setPlaying(false)}
+        onLoadedMetadata={handleLoadedMetadata}
         onTimeUpdate={handleTimeUpdate}
         onDurationChange={handleDurationChange}
         onEnded={handleEnded}
@@ -255,7 +306,7 @@ export default function VideoPlayer({ lesson, lessons, onNext, onProgress }) {
 
       {(buffering || mediaError) && <div className="ct-buffer-state" role="status">
         {buffering && !mediaError && <><span className="spinner" /> Buffering…</>}
-        {mediaError && <><span>{mediaError}</span><button className="btn btn-primary btn-sm" onClick={() => { const v=videoRef.current; setMediaError(""); v?.load(); v?.play().catch(()=>{}); }}>Retry</button></>}
+        {mediaError && <><span>{mediaError}</span><button className="btn btn-primary btn-sm" onClick={() => { const v=videoRef.current; ticketRecoveryTriedRef.current=false; renewPlaybackTicket({ resumeAt: v?.currentTime || current, autoplay: true }); }}>Retry</button></>}
       </div>}
 
       {nextPrompt && nextLesson && (
