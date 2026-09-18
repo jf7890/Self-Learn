@@ -7,7 +7,7 @@ import CourseGrid from "./components/CourseGrid.jsx";
 import CourseView from "./components/CourseView.jsx";
 import AdminDashboard from "./components/AdminDashboard.jsx";
 import Profile from "./components/Profile.jsx";
-import { getToken } from "./api";
+import { api, getToken } from "./api";
 import { useBranding } from "./BrandingContext.jsx";
 import { BrandMark, IconShield, IconLogOut, IconUsers } from "./icons.jsx";
 
@@ -29,7 +29,8 @@ function TopNav() {
   const user = JSON.parse(localStorage.getItem("ct_user") || "null");
   const { logo_url } = useBranding();
 
-  const logout = () => {
+  const logout = async () => {
+    try { await api.logout(); } catch {}
     localStorage.removeItem("ct_token");
     localStorage.removeItem("ct_user");
     navigate("/login");

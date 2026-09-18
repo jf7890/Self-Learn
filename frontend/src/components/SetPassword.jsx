@@ -38,7 +38,7 @@ export default function SetPassword() {
     setLoading(true);
     try {
       const data = await api.setPasswordViaToken(token, password);
-      localStorage.setItem("ct_token", data.token);
+      localStorage.setItem("ct_token", "cookie-session");
       localStorage.setItem("ct_user", JSON.stringify(data.user));
       navigate("/");
     } catch (err) {

@@ -5,11 +5,8 @@ function getToken() {
 }
 
 async function request(path, options = {}) {
-  const token = getToken();
   const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
-  if (token) headers.Authorization = `Bearer ${token}`;
-
-  const res = await fetch(`${BASE}${path}`, { ...options, headers });
+  const res = await fetch(`${BASE}${path}`, { ...options, headers, credentials: "same-origin" });
 
   if (res.status === 401 && !options.skipAuthRedirect) {
     localStorage.removeItem("ct_token");
@@ -29,11 +26,8 @@ async function request(path, options = {}) {
 // Separate helper for multipart uploads — no Content-Type header (the
 // browser sets the correct multipart boundary itself).
 async function uploadRequest(path, formData) {
-  const token = getToken();
   const headers = {};
-  if (token) headers.Authorization = `Bearer ${token}`;
-
-  const res = await fetch(`${BASE}${path}`, { method: "POST", headers, body: formData });
+  const res = await fetch(`${BASE}${path}`, { method: "POST", headers, body: formData, credentials: "same-origin" });
 
   if (res.status === 401) {
     localStorage.removeItem("ct_token");
@@ -56,6 +50,7 @@ export const api = {
     request("/auth/login", { method: "POST", body: JSON.stringify({ username, password }), skipAuthRedirect: true }),
   jellyfinLogin: (username, password) =>
     request("/auth/jellyfin/login", { method: "POST", body: JSON.stringify({ username, password }), skipAuthRedirect: true }),
+  logout: () => request("/auth/logout", { method: "POST" }),
   getCourses: () => request("/courses"),
   getFeatured: () => request("/featured"),
   getCourse: (id) => request(`/courses/${id}`),
@@ -79,10 +74,10 @@ export const api = {
       body: JSON.stringify({ lesson_id: lessonId, position_seconds: positionSeconds, completed }),
     }),
   rescan: () => request("/admin/rescan", { method: "POST" }),
-  mediaUrl: (lessonId) => `${BASE}/media/${lessonId}?t=${getToken()}`,
-  authenticatedAssetUrl: (path) => `${path}${path.includes("?") ? "&" : "?"}t=${encodeURIComponent(getToken() || "")}`,
-  subtitleUrl: (subtitleId) => `${BASE}/subtitles/${subtitleId}?t=${getToken()}`,
-  attachmentUrl: (attachmentId) => `${BASE}/attachments/${attachmentId}?t=${getToken()}`,
+  mediaUrl: (lessonId) => `${BASE}/media/${lessonId}`,
+  authenticatedAssetUrl: (path) => path,
+  subtitleUrl: (subtitleId) => `${BASE}/subtitles/${subtitleId}`,
+  attachmentUrl: (attachmentId) => `${BASE}/attachments/${attachmentId}`,
 
   // admin
   listUsers: () => request("/admin/users"),
@@ -133,7 +128,7 @@ export const api = {
   updateEmailSettings: (settings) => request("/admin/email-settings", { method: "PUT", body: JSON.stringify(settings) }),
   testEmailSettings: (toAddress) => request("/admin/email-settings/test", { method: "POST", body: JSON.stringify({ to_address: toAddress }) }),
   getLoginHistory: (limit = 200) => request(`/admin/login-history?limit=${limit}`),
-  backupUrl: () => `${BASE}/admin/backup?t=${getToken()}`,
+  backupUrl: () => `${BASE}/admin/backup`,
 };
 
 export { getToken };

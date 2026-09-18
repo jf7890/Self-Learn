@@ -20,7 +20,7 @@ from datetime import datetime, timedelta, timezone
 import bcrypt
 import jwt
 import requests
-from fastapi import Header, HTTPException, Depends, Query
+from fastapi import Cookie, Header, HTTPException, Depends, Query
 from db import get_conn, row_to_dict, get_setting
 
 JWT_SECRET = os.environ.get("SECRET_KEY", "change-me")
@@ -159,10 +159,15 @@ def decode_token(token: str) -> dict:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
 
-def get_current_user(authorization: str = Header(default=None), t: str = Query(default=None)) -> dict:
+def get_current_user(
+    authorization: str = Header(default=None),
+    session_token: str = Cookie(default=None),
+    t: str = Query(default=None),
+) -> dict:
     """
-    Accepts the JWT either as a Bearer header (normal API calls) or as a
-    ?t= query param (needed for <video>/<a> tags, which can't set headers).
+    Prefer the HttpOnly session cookie. Bearer and query-token support remain
+    temporarily for API compatibility, but the web client never places a JWT
+    in a media URL.
 
     Re-verifies against the database on every call rather than trusting
     the token's embedded claims — otherwise deleting a user, or demoting
@@ -170,13 +175,15 @@ def get_current_user(authorization: str = Header(default=None), t: str = Query(d
     expired (up to 14 days later).
     """
     token = None
-    if authorization and authorization.startswith("Bearer "):
+    if session_token:
+        token = session_token
+    elif authorization and authorization.startswith("Bearer "):
         token = authorization.removeprefix("Bearer ").strip()
     elif t:
         token = t
 
     if not token:
-        raise HTTPException(status_code=401, detail="Missing bearer token")
+        raise HTTPException(status_code=401, detail="Missing authentication token")
 
     payload = decode_token(token)
 

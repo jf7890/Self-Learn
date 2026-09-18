@@ -1,6 +1,8 @@
 """Public authentication, setup, and password-reset routes."""
 
-from fastapi import APIRouter, HTTPException, Request
+import os
+
+from fastapi import APIRouter, HTTPException, Request, Response
 
 import auth
 import mailer
@@ -12,6 +14,14 @@ from db import any_users_exist, get_conn, get_setting, row_to_dict
 from schemas import ForgotPasswordRequest, LoginRequest, SetPasswordRequest, SetupRequest
 
 router = APIRouter()
+SESSION_COOKIE = "session_token"
+
+def auth_response(response: Response, user: dict):
+    token = issue_token(user)
+    secure = os.environ.get("SESSION_COOKIE_SECURE", "true").lower() not in {"0", "false", "no"}
+    response.set_cookie(SESSION_COOKIE, token, max_age=auth.JWT_TTL_SECONDS, httponly=True,
+                        secure=secure, samesite="lax", path="/")
+    return {"user": {"id": user["id"], "username": user["username"], "is_admin": bool(user["is_admin"])}}
 
 
 def normalized_identifier(value: str) -> str:
@@ -60,7 +70,7 @@ def auth_config():
 
 
 @router.post("/auth/setup")
-def setup(body: SetupRequest, request: Request):
+def setup(body: SetupRequest, request: Request, response: Response):
     ip = rate_limit.get_client_ip(request)
     key = f"setup:{ip}"
     rate_limit.check_rate_limit(key)
@@ -77,11 +87,11 @@ def setup(body: SetupRequest, request: Request):
         cursor = conn.execute("INSERT INTO users(username,password_hash,is_admin) VALUES(?,?,1)", (username, hash_password(body.password)))
         user = row_to_dict(conn.execute("SELECT * FROM users WHERE id=?", (cursor.lastrowid,)).fetchone())
     rate_limit.record_success(key)
-    return {"token": issue_token(user), "user": {"id": user["id"], "username": user["username"], "is_admin": True}}
+    return auth_response(response, user)
 
 
 @router.post("/auth/login")
-def login(body: LoginRequest, request: Request):
+def login(body: LoginRequest, request: Request, response: Response):
     ip = rate_limit.get_client_ip(request)
     username = validate_credentials(body.username, body.password)
     keys = check_login_limits(ip, username)
@@ -93,11 +103,11 @@ def login(body: LoginRequest, request: Request):
         raise HTTPException(status_code=401, detail=str(error))
     record_login_success(keys)
     log_login_attempt(user["id"], user["username"], ip, True, "local")
-    return {"token": issue_token(user), "user": {"id": user["id"], "username": user["username"], "is_admin": bool(user["is_admin"])}}
+    return auth_response(response, user)
 
 
 @router.post("/auth/jellyfin/login")
-def jellyfin_login(body: LoginRequest, request: Request):
+def jellyfin_login(body: LoginRequest, request: Request, response: Response):
     ip = rate_limit.get_client_ip(request)
     username = validate_credentials(body.username, body.password)
     keys = check_login_limits(ip, username, "jellyfin-login")
@@ -112,8 +122,13 @@ def jellyfin_login(body: LoginRequest, request: Request):
     user = get_or_create_jellyfin_linked_user(jellyfin_user)
     record_login_success(keys)
     log_login_attempt(user["id"], user["username"], ip, True, "jellyfin")
-    return {"token": issue_token(user), "user": {"id": user["id"], "username": user["username"], "is_admin": bool(user["is_admin"])}}
+    return auth_response(response, user)
 
+
+@router.post("/auth/logout", status_code=204)
+def logout(response: Response):
+    secure = os.environ.get("SESSION_COOKIE_SECURE", "true").lower() not in {"0", "false", "no"}
+    response.delete_cookie(SESSION_COOKIE, path="/", httponly=True, secure=secure, samesite="lax")
 
 @router.post("/auth/forgot-password")
 def forgot_password(body: ForgotPasswordRequest, request: Request):
@@ -149,7 +164,7 @@ def check_auth_token(token: str):
 
 
 @router.post("/auth/token/{token}")
-def set_password_via_token(token: str, body: SetPasswordRequest):
+def set_password_via_token(token: str, body: SetPasswordRequest, response: Response):
     if len(body.password) < 8 or len(body.password) > 1024:
         raise HTTPException(status_code=400, detail="Password must be between 8 and 1024 characters")
     with get_conn() as conn:
@@ -159,4 +174,4 @@ def set_password_via_token(token: str, body: SetPasswordRequest):
         conn.execute("UPDATE users SET password_hash=? WHERE id=?", (hash_password(body.password), resolved["user_id"]))
         auth.consume_auth_token(conn, token)
         user = conn.execute("SELECT id,username,is_admin FROM users WHERE id=?", (resolved["user_id"],)).fetchone()
-    return {"token": issue_token(dict(user)), "user": {"id": user["id"], "username": user["username"], "is_admin": bool(user["is_admin"])}}
+    return auth_response(response, dict(user))

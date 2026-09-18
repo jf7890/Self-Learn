@@ -34,7 +34,7 @@ export default function Login() {
       const data = jellyfinMode
         ? await api.jellyfinLogin(username, password)
         : await api.login(username, password);
-      localStorage.setItem("ct_token", data.token);
+      localStorage.setItem("ct_token", "cookie-session");
       localStorage.setItem("ct_user", JSON.stringify(data.user));
       navigate("/");
     } catch (err) {

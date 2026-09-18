@@ -60,6 +60,17 @@ from schemas import (
 )
 
 app = FastAPI(title="uLearn API")
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "same-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    if request.url.path.startswith("/media/"):
+        response.headers["Cache-Control"] = "private, no-store"
+        response.headers["Content-Disposition"] = "inline"
+    return response
 app.include_router(progress_router)
 app.include_router(comments_router)
 app.include_router(notes_router)
