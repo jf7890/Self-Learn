@@ -27,6 +27,7 @@ export default function VideoPlayer({ lesson, lessons, onNext, onProgress }) {
   const [preloadMode, setPreloadMode] = useState("metadata");
   const [bufferedEnd, setBufferedEnd] = useState(0);
   const [mediaError, setMediaError] = useState("");
+  const [mediaUrl, setMediaUrl] = useState("");
   const controlsTimeout = useRef(null);
   const durationReportedRef = useRef(false);
   const autoCompletedRef = useRef(false);
@@ -71,6 +72,18 @@ export default function VideoPlayer({ lesson, lessons, onNext, onProgress }) {
   }, [activeTrackId]);
 
   const nextLesson = findNextLesson(lessons, lesson.id);
+
+  // Request a short-lived, session-bound playback URL. The opaque URL seen in
+  // DevTools contains no lesson id and is useless outside this browser session.
+  useEffect(() => {
+    let cancelled = false;
+    setMediaUrl("");
+    setMediaError("");
+    api.createMediaTicket(lesson.id)
+      .then((result) => { if (!cancelled) setMediaUrl(result.url); })
+      .catch(() => { if (!cancelled) setMediaError("Video could not be authorized. Sign in again and retry."); });
+    return () => { cancelled = true; };
+  }, [lesson.id]);
 
   // Resume from stored position when lesson changes
   useEffect(() => {
@@ -211,7 +224,7 @@ export default function VideoPlayer({ lesson, lessons, onNext, onProgress }) {
     <div className="ct-player" onMouseMove={revealControls} onClick={revealControls}>
       <video
         ref={videoRef}
-        src={api.mediaUrl(lesson.id)}
+        src={mediaUrl || undefined}
         preload={preloadMode}
         onPlay={() => { setPlaying(true); setBuffering(false); setPreloadMode("auto"); }}
         onPlaying={() => { setPlaying(true); setBuffering(false); setMediaError(""); }}

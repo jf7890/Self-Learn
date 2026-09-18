@@ -67,7 +67,7 @@ async def security_headers(request: Request, call_next):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "same-origin"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
-    if request.url.path.startswith("/media/"):
+    if request.url.path.startswith(("/media/", "/play/")):
         response.headers["Cache-Control"] = "private, no-store"
         response.headers["Content-Disposition"] = "inline"
     return response

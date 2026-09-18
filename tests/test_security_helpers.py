@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "server"))
 import db
 import main
 from routers.media import srt_to_vtt
+from services.playback_tickets import issue_playback_ticket, validate_playback_ticket
 
 class SecurityHelpersTest(unittest.TestCase):
     def test_ranges(self):
@@ -35,6 +36,12 @@ class SecurityHelpersTest(unittest.TestCase):
             self.assertFalse(main._can_access_course(conn, {"sub": str(member), "is_admin": False}, course))
             conn.execute("INSERT INTO course_access(user_id,course_id,granted_by) VALUES(?,?,?)", (member, course, admin))
             self.assertTrue(main._can_access_course(conn, {"sub": str(member), "is_admin": False}, course))
+
+    def test_playback_ticket_is_bound_to_user_and_session(self):
+        ticket = issue_playback_ticket("7", 42, "session-a")
+        self.assertEqual(validate_playback_ticket(ticket, "7", "session-a")["lesson_id"], 42)
+        self.assertIsNone(validate_playback_ticket(ticket, "8", "session-a"))
+        self.assertIsNone(validate_playback_ticket(ticket, "7", "session-b"))
 
     def test_safe_path_rejects_escape(self):
         Path(os.environ["COURSES_ROOT"]).mkdir()

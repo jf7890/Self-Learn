@@ -74,6 +74,7 @@ export const api = {
       body: JSON.stringify({ lesson_id: lessonId, position_seconds: positionSeconds, completed }),
     }),
   rescan: () => request("/admin/rescan", { method: "POST" }),
+  createMediaTicket: (lessonId) => request(`/media/${lessonId}/ticket`, { method: "POST" }),
   mediaUrl: (lessonId) => `${BASE}/media/${lessonId}`,
   authenticatedAssetUrl: (path) => path,
   subtitleUrl: (subtitleId) => `${BASE}/subtitles/${subtitleId}`,
